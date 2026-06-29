@@ -89,6 +89,12 @@
   <div id="cards" class="cards" hidden></div>
 </section>
 
+<section class="analyze">
+  <strong>Live SRT MPEG-TS — pulled from the gateway every ~5s</strong>
+  <span class="note" id="srt-meta"></span>
+  <div id="srt-card" class="cards"></div>
+</section>
+
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
 <script src="https://cdn.jsdelivr.net/npm/protobufjs@7.4.0/dist/protobuf.min.js"></script>
 <script src="/ts-analyze.js"></script>
@@ -337,6 +343,48 @@ aBtn.addEventListener('click', () => {
     aBtn.textContent = 'Analyze segments (decode .ts in browser)';
   }
 });
+
+// --- live SRT pull: poll a server-side snapshot of the SRT MPEG-TS (KLV) ---
+const srtCard = $('srt-card'), srtMeta = $('srt-meta');
+const hexSpaced = (h) => h.replace(/(..)/g, '$1 ').trim();
+function renderSrt(s) {
+  if (!s || s.error) {
+    srtCard.innerHTML = `<div class="card"><div class="seg">SRT pull</div>` +
+      `<div class="srow">${s && s.error ? s.error : 'no snapshot'}</div></div>`;
+    return;
+  }
+  const rows = (s.streams || []).map((st) =>
+    `<div class="srow"><span>#${st.index} ${ICON[st.kind] || '•'} ${st.codec}` +
+    `${st.tag ? ` · <span class="pidv">${st.tag}</span>` : ''}</span>` +
+    `<span class="pidv">PID 0x${st.pid.toString(16)}</span></div>`).join('');
+  const k = s.klv;
+  let klvHtml = '<div class="srow">no KLV stream</div>';
+  if (k && !k.error) {
+    klvHtml =
+      `<div class="srow" style="border-top:1px solid #2a3645;margin-top:6px;padding-top:8px">` +
+      `<span><b>KLV</b> · SMPTE ST 336</span><span>${k.valueLen.toLocaleString()} B value</span></div>` +
+      `<div class="srow"><span>Universal Label</span>` +
+      `<span class="pidv" style="font-size:11px">${hexSpaced(k.ul)}</span></div>` +
+      `<div class="srow"><span>value head</span>` +
+      `<span class="pidv" style="font-size:11px">${hexSpaced(k.valueHead)}…</span></div>` +
+      (k.frame
+        ? `<div class="srow"><span>decoded frame</span><span>#${k.frame.frameId} · ` +
+          `${k.frame.people} people${k.frame.ball ? ` · ball ${k.frame.ball.x}, ${k.frame.ball.y}, ${k.frame.ball.z}` : ''}</span></div>`
+        : '');
+  }
+  srtCard.innerHTML = `<div class="card" style="min-width:360px">${rows}${klvHtml}</div>`;
+}
+async function refreshSrt() {
+  try {
+    const s = await (await fetch('/srt/snapshot.json?_=' + Date.now(), { cache:'no-store' })).json();
+    srtMeta.textContent = s.time
+      ? `${(s.bytes/1024|0).toLocaleString()} KB pulled · updated ${new Date(s.time).toLocaleTimeString()}`
+      : '';
+    renderSrt(s);
+  } catch (e) { srtMeta.textContent = 'snapshot unavailable'; srtCard.innerHTML = ''; }
+}
+refreshSrt();
+setInterval(refreshSrt, 5000);
 </script>
 </body>
 </html>
