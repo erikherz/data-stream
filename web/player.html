@@ -22,6 +22,13 @@
   .ok { color:#3fb950; } .bad { color:#f85149; }
   .legend span { display:inline-flex; align-items:center; gap:6px; margin-right:12px; }
   .dot { width:10px; height:10px; border-radius:50%; display:inline-block; }
+  .manifest { padding:0 16px 20px; }
+  .manifest button { background:var(--panel); border:1px solid var(--line); color:#e6edf3; font:inherit;
+    padding:7px 14px; border-radius:6px; cursor:pointer; }
+  .manifest button:hover { border-color:var(--home); color:var(--home); }
+  .manifest .note { margin-left:10px; color:#8b98a5; font-size:12px; }
+  .manifest pre { margin:10px 0 0; padding:12px 14px; background:var(--panel); border:1px solid var(--line);
+    border-radius:8px; max-height:320px; overflow:auto; white-space:pre-wrap; word-break:break-all; color:#cfe3f5; }
 </style>
 </head>
 <body>
@@ -53,6 +60,12 @@
     <div><span class="k">data↔video</span><span id="skew">—</span></div>
   </div>
 </div>
+
+<section class="manifest">
+  <button id="toggle-manifest">Show HLS manifest</button>
+  <span class="note" id="manifest-meta"></span>
+  <pre id="manifest" hidden></pre>
+</section>
 
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
 <script src="https://cdn.jsdelivr.net/npm/protobufjs@7.4.0/dist/protobuf.min.js"></script>
@@ -200,6 +213,29 @@ function draw() {
   requestAnimationFrame(draw);
 }
 requestAnimationFrame(draw);
+
+// --- manifest panel: reveal + live-refresh the current playlist ---
+const mEl = $('manifest'), mBtn = $('toggle-manifest'), mMeta = $('manifest-meta');
+let mTimer = null;
+async function refreshManifest() {
+  try {
+    const r = await fetch(SRC + '?_=' + Date.now(), { cache: 'no-store' });
+    mEl.textContent = await r.text();
+    mMeta.textContent = `fetched ${new Date().toLocaleTimeString()} · HTTP ${r.status} · ${SRC}`;
+  } catch (e) { mMeta.textContent = 'fetch error: ' + e.message; }
+}
+mBtn.addEventListener('click', () => {
+  if (mEl.hasAttribute('hidden')) {
+    mEl.removeAttribute('hidden');
+    mBtn.textContent = 'Hide HLS manifest';
+    refreshManifest();
+    mTimer = setInterval(refreshManifest, 2000);
+  } else {
+    mEl.setAttribute('hidden', '');
+    mBtn.textContent = 'Show HLS manifest';
+    clearInterval(mTimer); mTimer = null;
+  }
+});
 </script>
 </body>
 </html>
