@@ -29,6 +29,16 @@
   .manifest .note { margin-left:10px; color:#8b98a5; font-size:12px; }
   .manifest pre { margin:10px 0 0; padding:12px 14px; background:var(--panel); border:1px solid var(--line);
     border-radius:8px; max-height:320px; overflow:auto; white-space:pre-wrap; word-break:break-all; color:#cfe3f5; }
+  .analyze { padding:0 16px 24px; }
+  .analyze button { background:var(--panel); border:1px solid var(--line); color:#e6edf3; font:inherit;
+    padding:7px 14px; border-radius:6px; cursor:pointer; }
+  .analyze button:hover { border-color:var(--home); color:var(--home); }
+  .analyze .note { margin-left:10px; color:#8b98a5; font-size:12px; }
+  .cards { display:flex; gap:12px; margin-top:10px; overflow-x:auto; padding-bottom:6px; }
+  .card { flex:0 0 auto; min-width:230px; background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 12px; }
+  .card .seg { color:var(--home); font-weight:600; margin-bottom:6px; word-break:break-all; }
+  .srow { display:flex; justify-content:space-between; gap:10px; padding:3px 0; border-top:1px solid #1b2531; }
+  .srow .pidv { color:#8b98a5; }
 </style>
 </head>
 <body>
@@ -67,8 +77,15 @@
   <pre id="manifest" hidden></pre>
 </section>
 
+<section class="analyze">
+  <button id="toggle-analyze">Analyze segments (decode .ts in browser)</button>
+  <span class="note" id="analyze-meta"></span>
+  <div id="cards" class="cards" hidden></div>
+</section>
+
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
 <script src="https://cdn.jsdelivr.net/npm/protobufjs@7.4.0/dist/protobuf.min.js"></script>
+<script src="/ts-analyze.js"></script>
 <script>
 const COURT = { x: 28.65, y: 15.24 };
 const TEAM_COLOR = { 1:'#4cc3ff', 2:'#ff6b6b', 3:'#ffd23f', 0:'#8b98a5' };
@@ -234,6 +251,53 @@ mBtn.addEventListener('click', () => {
     mEl.setAttribute('hidden', '');
     mBtn.textContent = 'Show HLS manifest';
     clearInterval(mTimer); mTimer = null;
+  }
+});
+
+// --- segment analyzer: decode each current .ts and show its streams side by side ---
+const aBtn = $('toggle-analyze'), aCards = $('cards'), aMeta = $('analyze-meta');
+const segCache = new Map();
+const ICON = { video:'🎬', audio:'🔊', data:'📊' };
+async function analyzeWindow() {
+  aMeta.textContent = 'fetching playlist…';
+  let segs;
+  try {
+    const txt = await (await fetch(SRC + '?_=' + Date.now(), { cache:'no-store' })).text();
+    segs = txt.split('\n').map((s) => s.trim()).filter((s) => s && !s.startsWith('#'));
+  } catch (e) { aMeta.textContent = 'playlist error: ' + e.message; return; }
+  aCards.innerHTML = '';
+  let done = 0;
+  for (const name of segs) {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.innerHTML = `<div class="seg">${name}</div><div class="streams">decoding…</div>`;
+    aCards.appendChild(card);
+    try {
+      let info = segCache.get(name);
+      if (!info) {
+        const ab = await (await fetch('/hls/' + name, { cache:'no-store' })).arrayBuffer();
+        info = window.analyzeTsSegment(new Uint8Array(ab));
+        segCache.set(name, info);
+        if (segCache.size > 24) segCache.delete(segCache.keys().next().value);
+      }
+      card.querySelector('.streams').innerHTML = info.streams.length
+        ? info.streams.map((s) =>
+            `<div class="srow"><span>#${s.index} ${ICON[s.kind]} ${s.codec}</span>` +
+            `<span>${s.detail}</span><span class="pidv">0x${s.pid.toString(16)}</span></div>`).join('')
+        : '<div class="srow">no streams parsed</div>';
+    } catch (e) { card.querySelector('.streams').textContent = 'error: ' + e.message; }
+    done++;
+  }
+  aMeta.textContent = `${done} segments · decoded in-browser · ${new Date().toLocaleTimeString()}`;
+}
+aBtn.addEventListener('click', () => {
+  if (aCards.hasAttribute('hidden')) {
+    aCards.removeAttribute('hidden');
+    aBtn.textContent = 'Hide segment analysis';
+    analyzeWindow();
+  } else {
+    aCards.setAttribute('hidden', '');
+    aBtn.textContent = 'Analyze segments (decode .ts in browser)';
   }
 });
 </script>

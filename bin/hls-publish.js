@@ -39,7 +39,7 @@ await tap.start();
 const ffmpeg = spawn('ffmpeg', [
   '-hide_banner', '-loglevel', 'error',
   '-re', '-stream_loop', '-1', '-i', VIDEO,
-  '-an',
+  '-c:a', 'aac', '-ac', '2', '-b:a', '128k',
   '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency', '-crf', '23',
   '-g', '60', '-keyint_min', '60', '-sc_threshold', '0',
   '-force_key_frames', 'expr:gte(t,n_forced*2)',

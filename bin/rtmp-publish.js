@@ -40,7 +40,7 @@ pub.on('ready', async () => {
   ffmpeg = spawn('ffmpeg', [
     '-hide_banner', '-loglevel', 'error',
     '-re', '-stream_loop', '-1', '-i', VIDEO,
-    '-an', '-c:v', 'copy',
+    '-c:v', 'copy', '-c:a', 'aac', '-ac', '2', '-b:a', '128k',
     '-f', 'flv', '-flvflags', 'no_duration_filesize', 'pipe:1',
   ], { stdio: ['ignore', 'pipe', 'inherit'] });
 

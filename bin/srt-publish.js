@@ -25,7 +25,7 @@ const ffmpeg = spawn(
   [
     '-hide_banner', '-loglevel', 'error',
     '-re', '-stream_loop', '-1', '-i', VIDEO,
-    '-an', '-c:v', 'copy',
+    '-c:v', 'copy', '-c:a', 'aac', '-ac', '2', '-b:a', '128k',
     '-pat_period', '0.2',
     '-mpegts_flags', '+resend_headers',
     '-flush_packets', '1',
