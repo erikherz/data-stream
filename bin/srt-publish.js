@@ -16,7 +16,9 @@ import { DataTap } from '../lib/data-tap.js';
 import { TsInjector } from '../lib/ts-inject.js';
 
 const VIDEO = process.env.VIDEO ?? '/home/ubuntu/adena.mp4';
-const DATA_PID = Number(process.env.DATA_PID ?? 0x101);
+// 0x102, not 0x101: with audio enabled ffmpeg puts AAC on 0x101, so the data
+// stream must use the next free PID to avoid colliding with it.
+const DATA_PID = Number(process.env.DATA_PID ?? 0x102);
 
 const log = (...a) => console.error('[srt-publish]', ...a);
 
