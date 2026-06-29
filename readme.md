@@ -8,9 +8,10 @@ and downstream tooling sees a standards-conformant metadata track.
 
 ## Source
 
-`wss://brian.moqcdn.net/feed` — binary Protocol Buffers (schema:
-`vendor/tracking.proto`, package `hawkeye.tracking.v1`). One `StreamMeta` on
-connect, then `Frame`s at ~60 Hz (~10 KB/frame, ~4.8 Mbps). The host only
+The feed is a private WebSocket endpoint (set via the `HAWKEYE_FEED` env var) —
+binary Protocol Buffers (schema: `vendor/tracking.proto`, package
+`hawkeye.tracking.v1`). One `StreamMeta` on connect, then `Frame`s at ~60 Hz
+(~10 KB/frame, ~4.8 Mbps). The host only
 resolves from the project server.
 
 The wire envelope is a `oneof`:
@@ -56,8 +57,8 @@ court-relative). One `Frame` is ~10 KB on the wire.
 
 `lib/data-tap.js` (`DataTap`) is the single source every muxer shares:
 
-1. Connect to `wss://brian.moqcdn.net/feed` (Node ≥ 22 global `WebSocket`,
-   `binaryType = 'arraybuffer'`).
+1. Connect to the feed endpoint from `HAWKEYE_FEED` (Node ≥ 22 global
+   `WebSocket`, `binaryType = 'arraybuffer'`).
 2. Decode each binary message as `hawkeye.tracking.v1.Message` with protobufjs.
 3. Re-emit a clean event stream — but **keep the original wire bytes** on every
    frame as `f.raw`. That is the key move: muxers re-embed `f.raw` verbatim, so
@@ -248,11 +249,8 @@ publisher at `/var/www/html/hls`:
 
 ```sh
 bash scripts/serve-player.sh   # then open http://<server-ip>/
-bash scripts/enable-https.sh   # optional: HTTPS on 443 via the luke.moqcdn.net cert
+bash scripts/enable-https.sh   # optional: HTTPS on 443 via the configured TLS cert
 ```
-
-Live demo: **https://luke.moqcdn.net/** (HTTP on port 80 also works).
-
 ---
 
 ## How it's mixed into RTMP  (Phase 2)
@@ -322,7 +320,7 @@ The live playback URL from the NMS box (RTMP/1935 is open; http-flv/8000 is
 local-only unless opened in the SG):
 
 ```
-rtmp://18.188.46.242:1935/live/hawkeye
+rtmp://<server-ip>:1935/live/hawkeye
 ```
 
 `bin/flv-extract.js <url>` pulls the data track back through NMS and verifies
@@ -360,6 +358,6 @@ webroot every ~5 s for the player's "Live RTMP" card.
 
 ```sh
 ./deploy.sh                          # rsync + npm install on the server
-ssh -i ~/.ssh/brian-may-2026.pem ubuntu@18.188.46.242 \
+ssh -i ~/.ssh/<key>.pem ubuntu@<server-ip> \
   'cd hawkeye-data-stream && npm run tap:stats 10'
 ```
