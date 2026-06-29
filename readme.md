@@ -66,7 +66,10 @@ webroot (port 80) and points the publisher at `/var/www/html/hls`:
 
 ```sh
 bash scripts/serve-player.sh   # then open http://<server-ip>/
+bash scripts/enable-https.sh   # optional: HTTPS on 443 via the luke.moqcdn.net cert
 ```
+
+Live demo: **https://luke.moqcdn.net/** (HTTP on port 80 also works).
 
 ## Phase 2 — run (on the server)
 
