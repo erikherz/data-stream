@@ -1,0 +1,125 @@
+syntax = "proto3";
+
+// Simulated Hawk-Eye SkeleTRACK-style basketball tracking feed.
+//
+// NOTE: This is NOT the real, proprietary Hawk-Eye/Sony wire format (which is
+// undocumented). It is a plausible, faithful emulation of the publicly known
+// characteristics of the NBA tracking feed: 29 skeletal joints per person, full
+// 3D pose, 10 players + 3 referees tracked simultaneously, plus the ball,
+// sampled at 60 Hz.
+//
+// Coordinate system: right-handed, units in METERS.
+//   x : along court length,  [0, 28.65]  (NBA court = 94 ft)
+//   y : along court width,   [0, 15.24]  (NBA court = 50 ft)
+//   z : height above floor,  0 = floor, up is positive
+//   origin (0,0,0) = one corner of the court at floor level.
+package hawkeye.tracking.v1;
+
+// 29-joint skeletal model (values 0..28).
+enum JointType {
+  HEAD_TOP       = 0;
+  HEAD           = 1;
+  NECK           = 2;
+  LEFT_SHOULDER  = 3;
+  RIGHT_SHOULDER = 4;
+  LEFT_ELBOW     = 5;
+  RIGHT_ELBOW    = 6;
+  LEFT_WRIST     = 7;
+  RIGHT_WRIST    = 8;
+  LEFT_HAND      = 9;
+  RIGHT_HAND     = 10;
+  LEFT_THUMB     = 11;
+  RIGHT_THUMB    = 12;
+  THORAX         = 13;  // upper spine / between shoulders
+  STERNUM        = 14;
+  SPINE_MID      = 15;
+  PELVIS         = 16;  // root joint
+  LEFT_HIP       = 17;
+  RIGHT_HIP      = 18;
+  LEFT_KNEE      = 19;
+  RIGHT_KNEE     = 20;
+  LEFT_ANKLE     = 21;
+  RIGHT_ANKLE    = 22;
+  LEFT_HEEL      = 23;
+  RIGHT_HEEL     = 24;
+  LEFT_TOE       = 25;
+  RIGHT_TOE      = 26;
+  LEFT_FOOT      = 27;
+  RIGHT_FOOT     = 28;
+}
+
+enum Team {
+  TEAM_UNKNOWN = 0;
+  HOME         = 1;
+  AWAY         = 2;
+  OFFICIALS    = 3;
+}
+
+enum Role {
+  ROLE_UNKNOWN = 0;
+  PLAYER       = 1;
+  REFEREE      = 2;
+}
+
+message Vec3 {
+  float x = 1;
+  float y = 2;
+  float z = 3;
+}
+
+message Joint {
+  JointType type = 1;
+  Vec3 pos = 2;
+  float confidence = 3;  // 0..1 detection confidence
+}
+
+message Person {
+  uint32 id = 1;             // stable tracking id for the duration of the stream
+  Team team = 2;
+  Role role = 3;
+  uint32 jersey = 4;         // 0 for officials
+  repeated Joint joints = 5; // always 29, ordered by JointType
+}
+
+message Ball {
+  Vec3 pos = 1;
+  Vec3 velocity = 2;          // m/s
+  float radius = 3;           // meters (~0.12)
+  bool in_possession = 4;
+  uint32 possession_person_id = 5;  // 0 if loose
+}
+
+message GameClock {
+  uint32 period = 1;
+  float game_clock_seconds = 2;  // counts down within a period
+  float shot_clock_seconds = 3;
+  bool running = 4;
+}
+
+// A single 60 Hz capture frame.
+message Frame {
+  uint64 frame_id = 1;
+  int64 capture_timestamp_ms = 2;  // unix epoch milliseconds
+  GameClock clock = 3;
+  repeated Person people = 4;       // up to 13 (10 players + 3 officials)
+  Ball ball = 5;
+}
+
+// Sent once when a client connects, describing the stream.
+message StreamMeta {
+  string stream_id = 1;
+  string venue = 2;
+  string home_team = 3;
+  string away_team = 4;
+  uint32 sample_rate_hz = 5;       // 60
+  uint32 joint_count = 6;          // 29
+  Vec3 court_dimensions = 7;       // length, width, ceiling height (meters)
+}
+
+// Top-level envelope sent over the WebSocket (binary protobuf).
+message Message {
+  oneof payload {
+    StreamMeta meta = 1;
+    Frame frame = 2;
+  }
+}

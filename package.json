@@ -1,0 +1,16 @@
+{
+  "name": "hawkeye-data-stream",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Transport simulated Hawkeye basketball tracking data over SRT/MPEG-TS, RTMP, and HLS.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "tap:stats": "node bin/tap-stats.js"
+  },
+  "dependencies": {
+    "protobufjs": "^7.4.0"
+  }
+}
