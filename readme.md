@@ -239,8 +239,11 @@ frames, and verifies each `Frame`.
 `web/player.html` plays the HLS with hls.js and **decodes the ID3 timed metadata
 back into protobuf in the browser**, rendering the 13 skeletons + ball on a court
 in sync with the video clock. It also has an "Analyze segments" card (decodes the
-live `.ts` in-browser) and a "Live SRT pull" card showing the parallel SRT/KLV
-track. `scripts/serve-player.sh` drops it at the nginx webroot and points the
+live `.ts` in-browser) and side-by-side "Live SRT pull" / "Live RTMP" cards
+showing the parallel SRT/KLV and RTMP/AMF0 tracks (each polled from a server-side
+snapshot every ~5 s). A small control-server (`bin/control-server.js`) backs the
+Start/Stop button, which starts/stops all three transports (HLS + SRT + RTMP) at
+once. `scripts/serve-player.sh` drops the page at the nginx webroot and points the
 publisher at `/var/www/html/hls`:
 
 ```sh
@@ -254,20 +257,79 @@ Live demo: **https://luke.moqcdn.net/** (HTTP on port 80 also works).
 
 ## How it's mixed into RTMP  (Phase 2)
 
-`bin/rtmp-publish.js` is a custom RTMP publish client (`lib/rtmp-publish.js`,
-`lib/amf0.js`, `lib/flv.js`) that sends video + an `onHawkeye` **AMF0 data(18)**
-message per frame to a stock Node-Media-Server, which relays both to http-flv.
-The data rides as a standard AMF0 data message (base64 payload), so an unmodified
-NMS passes it through as a `data` track. Enhanced-RTMP typed/multitrack carriage
-(raw binary, no base64) is a follow-on.
+RTMP has no transport-stream PIDs — it carries a sequence of typed **FLV tags**
+multiplexed over AMF chunk streams. So the same protobuf frame rides a different
+envelope here: a **script-data message** alongside the video and audio tags.
+`bin/rtmp-publish.js` is a hand-rolled RTMP publish client
+(`lib/rtmp-publish.js`, `lib/amf0.js`, `lib/flv.js`) — no ffmpeg RTMP muxer is
+involved in the data path.
+
+### Pipeline
+
+```
+ffmpeg(-f flv)  ->  FlvDemux  ->  RtmpPublisher  ->  NMS (:1935)  ->  http-flv (:8000)
+                       │                ▲
+            DataTap ───┴── f.raw ──> sendHawkeye() interleaved on each video tag
+```
+
+- ffmpeg emits FLV (`-c:v copy`, `-c:a aac`); `FlvDemux` (`lib/flv.js`) cuts it
+  into whole tags, and `RtmpPublisher` forwards each over the RTMP chunk stream
+  (AMF0 handshake → `connect` → `createStream` → `publish`).
+- On every **video tag** the publisher flushes any queued Hawkeye frames via
+  `sendHawkeye(raw, lastVideoTs)`, stamping each with the current video
+  timestamp so the data interleaves in time order.
+- A **stock, unmodified** Node-Media-Server relays everything to its RTMP and
+  http-flv subscribers — no NMS plugin or patch.
+
+### FLV track map
+
+| FLV tag type        | Contents                                            |
+|---------------------|-----------------------------------------------------|
+| `9`  video          | H.264 (codec id `7`)                                |
+| `8`  audio          | AAC (sound format `10`)                             |
+| `18` script-data    | `onMetaData` (once) **+ `onHawkeye` per frame**     |
+
+### The `onHawkeye` message
+
+Each frame is one AMF0 **data(18)** message built by `lib/amf0.js`:
+
+```
+AMF0 string  "onHawkeye"            (type 0x02)
+AMF0 string  <base64 of f.raw>      (type 0x02 / long-string 0x0c)
+```
+
+- `stream_id` / message type **18** is the standard RTMP/FLV script-data
+  channel, so an unmodified NMS relays it as a generic `data` track.
+- The protobuf bytes are **base64-encoded** to stay inside an AMF0 string (AMF0
+  strings are not binary-safe). A ~10 KB frame → ~13.4 KB base64.
+- Enhanced-RTMP typed/multitrack carriage (raw binary, no base64) is a
+  follow-on; base64-in-AMF0 is the maximally-compatible path through stock
+  tooling today.
+
+> **Why VLC shows no data track:** VLC's media-info lists only *codec* tracks
+> (video/audio). `onHawkeye` is FLV **script-data**, not a codec, so players
+> ignore it — even though the bytes are flowing. The only way to *see* it is to
+> parse the script tags, which is what `bin/flv-extract.js` and the player's
+> "Live RTMP" card do.
 
 ```sh
 bash scripts/start-nms.sh                 # stock NMS: RTMP :1935, http-flv :8000
-node bin/rtmp-publish.js live hawkeye     # publish video + onHawkeye data messages
+bash scripts/start-rtmp.sh                # detached publisher (VIDEO=… APP=live NAME=hawkeye)
 bash scripts/rtmp-loopback-test.sh        # publish + pull http-flv + verify data
 ```
 
-`bin/flv-extract.js <url>` pulls the data track and verifies each `Frame`.
+The live playback URL from the NMS box (RTMP/1935 is open; http-flv/8000 is
+local-only unless opened in the SG):
+
+```
+rtmp://18.188.46.242:1935/live/hawkeye
+```
+
+`bin/flv-extract.js <url>` pulls the data track back through NMS and verifies
+each `Frame` (e.g. *361 onHawkeye tags, 361 valid frames, 0 failed*).
+`bin/rtmp-snapshot.js <http-flv-url>` emits a compact JSON snapshot (FLV tracks
++ a decoded `onHawkeye` peek); `scripts/rtmp-snapshot-loop.sh` writes it to the
+webroot every ~5 s for the player's "Live RTMP" card.
 
 ---
 
@@ -284,6 +346,7 @@ bash scripts/rtmp-loopback-test.sh        # publish + pull http-flv + verify dat
 | Timed ID3 in HLS              | Apple "Timed Metadata for HTTP Live Streaming" · ID3v2.4 |
 | HLS playlists                 | RFC 8216                                              |
 | SRT transport                 | draft-sharabayko-srt (Haivision SRT)                  |
+| RTMP / FLV tags / AMF0        | Adobe RTMP 1.0 · FLV/F4V spec · AMF0 spec             |
 
 ## Phases
 
