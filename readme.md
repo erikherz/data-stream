@@ -57,6 +57,17 @@ bash scripts/hls-loopback-test.sh          # publish + verify ID3 round-trip
 `bin/hls-extract.js <playlist.m3u8>` reads the segments, unwraps the ID3 PRIV
 frames, and verifies each `Frame`.
 
+### Browser player
+
+`web/player.html` plays the HLS with hls.js and **decodes the ID3 timed metadata
+back into protobuf in the browser**, rendering the 13 skeletons + ball on a court
+in sync with the video clock. `scripts/serve-player.sh` drops it at the nginx
+webroot (port 80) and points the publisher at `/var/www/html/hls`:
+
+```sh
+bash scripts/serve-player.sh   # then open http://<server-ip>/
+```
+
 ## Phase 2 — run (on the server)
 
 ```sh
