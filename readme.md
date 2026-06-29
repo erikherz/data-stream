@@ -34,8 +34,24 @@ ssh -i ~/.ssh/brian-may-2026.pem ubuntu@18.188.46.242 \
 1. **SRT / MPEG-TS** — splice a private-data PID (raw protobuf, PTS-synced) into
    ffmpeg's TS, ship over SRT. ✅ (`lib/ts.js`, `lib/ts-inject.js`,
    `bin/srt-publish.js`, `bin/ts-extract.js`; `scripts/srt-loopback-test.sh`)
-2. **RTMP** — FLV muxer publishing video + AMF data messages to Node-Media-Server. ← next
-3. **HLS** — in-band ID3 timed metadata in TS segments.
+2. **RTMP** — custom RTMP publish client sends video + `onHawkeye` AMF data(18)
+   messages to a stock Node-Media-Server, which relays both to http-flv. ✅
+   (`lib/amf0.js`, `lib/flv.js`, `lib/rtmp-publish.js`, `bin/rtmp-publish.js`,
+   `bin/flv-extract.js`; `scripts/{start-nms,rtmp-loopback-test}.sh`)
+3. **HLS** — in-band ID3 timed metadata in TS segments. ← next
+
+## Phase 2 — run (on the server)
+
+```sh
+bash scripts/start-nms.sh                 # stock NMS: RTMP :1935, http-flv :8000
+node bin/rtmp-publish.js live hawkeye     # publish video + onHawkeye data messages
+bash scripts/rtmp-loopback-test.sh        # publish + pull http-flv + verify data
+```
+
+`onHawkeye` rides as a standard AMF0 data(18) message (base64 payload), so a
+stock NMS relays it unmodified; it shows up as a `data` track in the http-flv.
+Enhanced-RTMP typed/multitrack carriage (raw binary, no base64) is a follow-on.
+`bin/flv-extract.js <url>` pulls the data track and verifies each `Frame`.
 
 ## Phase 1 — run (on the server)
 
