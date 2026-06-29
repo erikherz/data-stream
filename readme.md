@@ -77,7 +77,7 @@ video clock. Everything below is about that one extra track.
 
 ---
 
-## How it's mixed into MPEG-TS / SRT  (Phase 1)
+## How it's mixed into MPEG-TS / SRT
 
 `bin/srt-publish.js` runs ffmpeg to produce a standard MPEG-TS
 (ISO/IEC 13818-1), then pipes it through `TsInjector` (`lib/ts-inject.js`), a
@@ -204,7 +204,7 @@ the browser player's "Live SRT pull" card renders every 5 s
 
 ---
 
-## How it's mixed into HLS  (Phase 3)
+## How it's mixed into HLS
 
 `bin/hls-publish.js` reuses the **same** `TsInjector`, but swaps the envelope to
 Apple-style **timed ID3 metadata** and adds a keyframe segmenter. Here ffmpeg
@@ -323,7 +323,7 @@ bash scripts/enable-https.sh   # optional: HTTPS on 443 via the configured TLS c
 ```
 ---
 
-## How it's mixed into RTMP  (Phase 2)
+## How it's mixed into RTMP
 
 RTMP has no transport-stream PIDs — it carries a sequence of typed **FLV tags**
 multiplexed over AMF chunk streams. So the same protobuf frame rides a different
@@ -441,14 +441,6 @@ webroot every ~5 s for the player's "Live RTMP" card.
 | HLS playlists                 | RFC 8216                                              |
 | SRT transport                 | draft-sharabayko-srt (Haivision SRT)                  |
 | RTMP / FLV tags / AMF0        | Adobe RTMP 1.0 · FLV/F4V spec · AMF0 spec             |
-
-## Phases
-
-0. **Foundation** — data-tap + verifier + deploy. ✅
-1. **SRT / MPEG-TS** — synchronous SMPTE ST 336 KLV on a private PES (`0x06`,
-   `KLVA`). ✅
-2. **RTMP** — `onHawkeye` AMF0 data(18) through a stock NMS to http-flv. ✅
-3. **HLS** — ID3 PRIV on a metadata PID (`0x15`, `ID3 `) + keyframe segmenter. ✅
 
 ## Run / deploy (on the server)
 
