@@ -8,11 +8,13 @@
 import fs from 'node:fs';
 import { TS_PACKET_SIZE, SYNC_BYTE, pidOf, pusiOf, payloadStart } from '../lib/ts.js';
 import { makeVerifier } from '../lib/extract-verify.js';
+import { klvUnwrap } from '../lib/klv.js';
 
 function parseArgs(argv) {
-  const args = { file: null, pid: 0x101 };
+  const args = { file: null, pid: 0x102, klv: false };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--pid') args.pid = Number(argv[++i]);
+    else if (argv[i] === '--klv') args.klv = true; // unwrap SMPTE KLV before decoding
     else if (!args.file) args.file = argv[i];
   }
   return args;
@@ -60,7 +62,7 @@ function* extractPes(buf, dataPid) {
   if (cur) yield Buffer.concat(cur);
 }
 
-const { file, pid } = parseArgs(process.argv.slice(2));
+const { file, pid, klv } = parseArgs(process.argv.slice(2));
 const buf = await readInput(file);
 const verify = await makeVerifier();
 
@@ -74,7 +76,8 @@ let lastId = null;
 for (const payload of extractPes(buf, pid)) {
   total++;
   try {
-    const v = verify(payload);
+    const proto = klv ? klvUnwrap(payload).value : payload;
+    const v = verify(proto);
     ok++;
     if (firstId == null) firstId = v.frameId;
     lastId = v.frameId;

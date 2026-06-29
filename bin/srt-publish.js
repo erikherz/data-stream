@@ -14,6 +14,8 @@
 import { spawn } from 'node:child_process';
 import { DataTap } from '../lib/data-tap.js';
 import { TsInjector } from '../lib/ts-inject.js';
+import { KLVA_REGISTRATION_DESCRIPTOR } from '../lib/ts.js';
+import { klvWrap } from '../lib/klv.js';
 
 const VIDEO = process.env.VIDEO ?? '/home/ubuntu/adena.mp4';
 // 0x102, not 0x101: with audio enabled ffmpeg puts AAC on 0x101, so the data
@@ -36,7 +38,15 @@ const ffmpeg = spawn(
   { stdio: ['ignore', 'pipe', 'inherit'] },
 );
 
-const injector = new TsInjector({ dataPid: DATA_PID });
+// Synchronous KLV (SMPTE ST 336 / MISB ST 1402): private-data PES (0x06) tagged
+// 'KLVA' in the PMT, each protobuf frame wrapped as a KLV triplet. This is the
+// broadcast-standard envelope a downstream vendor's tooling already understands.
+const injector = new TsInjector({
+  dataPid: DATA_PID,
+  streamType: 0x06,
+  esDescriptor: KLVA_REGISTRATION_DESCRIPTOR,
+  wrapPayload: (raw) => klvWrap(raw),
+});
 ffmpeg.stdout.pipe(injector).pipe(process.stdout);
 
 const tap = new DataTap();

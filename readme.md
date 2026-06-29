@@ -31,9 +31,13 @@ ssh -i ~/.ssh/brian-may-2026.pem ubuntu@18.188.46.242 \
 ## Phases
 
 0. **Foundation** — data-tap + verifier + deploy. ✅
-1. **SRT / MPEG-TS** — splice a private-data PID (raw protobuf, PTS-synced) into
-   ffmpeg's TS, ship over SRT. ✅ (`lib/ts.js`, `lib/ts-inject.js`,
-   `bin/srt-publish.js`, `bin/ts-extract.js`; `scripts/srt-loopback-test.sh`)
+1. **SRT / MPEG-TS** — splice a data PID (PTS-synced) into ffmpeg's TS, ship over
+   SRT. ✅ Carried as **synchronous SMPTE ST 336 KLV** (MISB ST 1402): private
+   PES `0x06` + a `KLVA` registration descriptor, each frame a KLV triplet
+   (`lib/klv.js`) under a private Universal Label. ffmpeg/GStreamer recognize it
+   as `klv` natively (`ffmpeg -i srt://… -map 0:d:0 -c copy -f data out.klv`).
+   (`lib/ts.js`, `lib/ts-inject.js`, `bin/srt-publish.js`,
+   `bin/ts-extract.js --klv`; `scripts/srt-loopback-test.sh`)
 2. **RTMP** — custom RTMP publish client sends video + `onHawkeye` AMF data(18)
    messages to a stock Node-Media-Server, which relays both to http-flv. ✅
    (`lib/amf0.js`, `lib/flv.js`, `lib/rtmp-publish.js`, `bin/rtmp-publish.js`,
