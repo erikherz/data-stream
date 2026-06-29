@@ -40,6 +40,7 @@
   .analyze button:hover { border-color:var(--home); color:var(--home); }
   .analyze .note { margin-left:10px; color:#8b98a5; font-size:12px; }
   .cards { display:flex; gap:12px; margin-top:10px; overflow-x:auto; padding-bottom:6px; }
+  .cards[hidden] { display:none; } /* explicit: .cards display:flex would otherwise beat [hidden] */
   .card { flex:0 0 auto; min-width:230px; background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 12px; }
   .card .seg { color:var(--home); font-weight:600; margin-bottom:6px; word-break:break-all; }
   .srow { display:flex; justify-content:space-between; gap:10px; padding:3px 0; border-top:1px solid #1b2531; }
