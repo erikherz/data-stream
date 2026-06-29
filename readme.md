@@ -148,9 +148,25 @@ time-stamped to the media clock so a player can align metadata to a video frame:
   PTS. `TsInjector` reads the video PTS from the H.264 PID and drains queued
   frames at each video PUSI (keyframe/frame boundary), so the data lands ~aligned
   with the picture it describes.
-- `packetizePes()` slices the PES into 188-byte packets on the data PID with
-  correct continuity counters and an adaptation field for stuffing on the final
-  packet.
+
+The PES header `buildPes()` emits, byte for byte:
+
+```
+00 00 01            packet_start_code_prefix
+BD                  stream_id = private_stream_1
+LL LL               PES_packet_length (0 when payload > 65535 — allowed for 0xBD)
+80                  '10' marker + flags (no scrambling, original)
+80                  PTS_DTS_flags = '10'  (PTS present, no DTS)
+05                  PES_header_data_length
+21 .. .. .. .1      5-byte PTS, 33 bits interleaved with marker bits (90 kHz)
+<KLV triplet>       payload: UL + BER length + protobuf
+```
+
+- `packetizePes()` then slices that PES into 188-byte TS packets on the data PID:
+  the first packet sets PUSI and carries up to 184 payload bytes; the last packet
+  uses an **adaptation field** to stuff the remainder to a full 188. Each packet
+  advances a 4-bit **continuity counter** (`0x0…0xF`, wraps), which a receiver
+  uses to detect loss. A ~10 KB frame → ~56 packets per frame at ~60 Hz.
 
 ### Transport
 
@@ -158,7 +174,17 @@ ffmpeg flags chosen for clean live remuxing and mid-stream SRT joins:
 `-pat_period 0.2` (PSI 5×/s so a late joiner finds PAT/PMT fast),
 `-mpegts_flags +resend_headers`, `-flush_packets 1`. The muxed TS on stdout goes
 to a dumb SRT sender (`srt-live-transmit`), which knows nothing about the data —
-it just ships bytes.
+it just ships bytes. SRT carries the TS as its payload (typically 7 × 188 = 1316
+bytes per SRT packet) and adds its own ARQ retransmission + `latency`-bounded
+reorder buffer on top; the elementary streams, PIDs, and KLV are untouched —
+what we publish is exactly what a downstream `ffprobe`/`tsduck` sees:
+
+```
+$ ffprobe -show_entries stream=index,codec_type,codec_name,id srt://…
+  0  video  h264          id=0x100
+  1  audio  aac           id=0x101
+  2  data   klv (KLVA)    id=0x102
+```
 
 ```sh
 # Publish the muxed TS over SRT (listener on :9000):
@@ -206,26 +232,70 @@ hls.js / Safari parse it natively (`FRAG_PARSING_METADATA` /
 ### ID3 envelope
 
 Each frame becomes one **ID3v2.4 tag** containing a single **PRIV frame**
-(`lib/id3.js`):
+(`lib/id3.js`), and that tag is the payload of one metadata PES (`stream_id
+0xBD`, same `buildPes()` as the SRT path), so its **PTS** places it on the media
+timeline. The tag, byte for byte:
 
-- Owner identifier `com.vivoh.hawkeye\0`, then the raw protobuf bytes (`f.raw`).
-- Tag/frame sizes are ID3 "synchsafe" (7 usable bits/byte).
-- The tag is the payload of the metadata PES; its **PTS** (set by `TsInjector`
-  from the video clock) places it on the media timeline.
+```
+49 44 33  04 00  00  ss ss ss ss          "ID3", v2.4.0, flags=0, synchsafe tag size
+  50 52 49 56  ss ss ss ss  00 00         "PRIV" frame, synchsafe size, flags
+    63 6F 6D 2E … 68 61 77 6B 65 79 65 00 owner "com.vivoh.hawkeye\0"
+    <protobuf bytes>                       the value (f.raw, untouched)
+```
+
+- **Synchsafe** sizes store 7 usable bits per byte (top bit always 0) so a size
+  field can never be mistaken for an MPEG sync word. `synchsafe()` /
+  `unsynchsafe()` in `lib/id3.js` do the 28-bit pack/unpack.
+- The owner string is what a generic ID3 reader keys on; everything after the
+  `\0` is our opaque payload.
 
 ### Segmenter
 
 `lib/hls-segmenter.js` consumes the injected TS and:
 
 - splits a new segment at each video keyframe (adaptation-field
-  `random_access_indicator`), respecting a `minSegSec` floor;
+  `random_access_indicator`, via `hasRandomAccess()`), respecting a `minSegSec`
+  floor so a dense-keyframe source doesn't produce sub-second segments;
 - prepends the cached PAT/PMT to every segment so each `.ts` is independently
   decodable;
-- writes a sliding-window `EXT-X` media playlist (RFC 8216).
+- maintains a sliding window (default 6 segments), deletes evicted `.ts` files,
+  and writes the playlist atomically (`.tmp` + `rename`) so a client never reads
+  a half-written manifest.
+
+The playlist is a standard RFC 8216 live media playlist:
+
+```m3u8
+#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-TARGETDURATION:2
+#EXT-X-MEDIA-SEQUENCE:42        ← advances as segments roll off (no ENDLIST = live)
+#EXTINF:2.000,
+hawkeye00042.ts
+#EXTINF:2.000,
+hawkeye00043.ts
+…
+```
 
 Because the ID3 PES is already interleaved and PTS-synced upstream, each frame
 lands in the segment covering its timestamp automatically — no per-segment
 alignment logic in the segmenter.
+
+### Browser decode path
+
+`web/player.html` recovers the data **in the browser**, two ways depending on
+the engine:
+
+- **hls.js** (MSE engine, most browsers): subscribes to
+  `Hls.Events.FRAG_PARSING_METADATA`; hls.js parses the metadata PID and hands
+  up samples `{ pts, data }`. The page runs `id3Priv()` (a mirror of `lib/id3.js`
+  PRIV-unwrap) → protobuf decode → buffers frames by PTS.
+- **Safari** (native HLS): the metadata surfaces as a `metadata` **TextTrack**;
+  the page reads `cuechange` events and decodes each cue's PRIV payload the same
+  way.
+
+A render loop keyed on `video.currentTime` picks the nearest buffered frame and
+draws the 13 skeletons + ball, so the overlay stays locked to the picture (the
+on-screen `skew` readout shows `currentTime − frame.pts`).
 
 ```sh
 node bin/hls-publish.js /tmp/hls hawkeye   # live HLS with the ID3 metadata PID
@@ -289,20 +359,46 @@ ffmpeg(-f flv)  ->  FlvDemux  ->  RtmpPublisher  ->  NMS (:1935)  ->  http-flv (
 
 ### The `onHawkeye` message
 
-Each frame is one AMF0 **data(18)** message built by `lib/amf0.js`:
+Each frame is one AMF0 **data (type 18)** message built by `lib/amf0.js`:
 
 ```
-AMF0 string  "onHawkeye"            (type 0x02)
-AMF0 string  <base64 of f.raw>      (type 0x02 / long-string 0x0c)
+02  00 09  6F 6E 48 61 77 6B 65 79 65        AMF0 string  "onHawkeye"  (marker 0x02, u16 len)
+0C  LL LL LL LL  <base64 of f.raw>           AMF0 long-string         (marker 0x0c, u32 len)
 ```
 
-- `stream_id` / message type **18** is the standard RTMP/FLV script-data
-  channel, so an unmodified NMS relays it as a generic `data` track.
-- The protobuf bytes are **base64-encoded** to stay inside an AMF0 string (AMF0
-  strings are not binary-safe). A ~10 KB frame → ~13.4 KB base64.
-- Enhanced-RTMP typed/multitrack carriage (raw binary, no base64) is a
-  follow-on; base64-in-AMF0 is the maximally-compatible path through stock
-  tooling today.
+- Message **type 18** (`0x12`) is the standard RTMP/FLV script-data channel, so
+  an unmodified NMS relays it as a generic `data` track.
+- The value is an **AMF0 long-string (0x0c)**, not the ordinary string (0x02):
+  0x02 caps length at 65535, so `sendHawkeye()` always uses the 32-bit-length
+  long-string to leave headroom.
+- The protobuf bytes are **base64-encoded** because AMF0 strings are not
+  binary-safe (a `\0` or high byte would corrupt parsing). A ~10 KB frame →
+  ~13.4 KB base64 (the ~33% bloat is the cost of the maximally-compatible path).
+- Enhanced-RTMP typed/multitrack carriage (raw binary, no base64) is a follow-on.
+
+### RTMP / FLV framing
+
+`lib/rtmp-publish.js` speaks just enough RTMP to publish — no playback path:
+
+- **Handshake** — the *simple* (un-digested) handshake: send `C0` (`0x03`) + a
+  1536-byte `C1`, then echo the server's `S1` back as `C2`.
+- **Session** — set the outgoing chunk size to 1 MiB (so every message is a
+  single chunk), then `connect` → `createStream` → `publish` as AMF0 invoke
+  (type 20) messages. The client sequences these by scanning the inbound bytes
+  for `NetConnection.Connect.Success` and `NetStream.Publish.Start`.
+- **Chunk header** — each message goes out as one fmt-0 chunk: a 12-byte header
+  carrying `{chunk_stream_id, timestamp, length, type_id, message_stream_id}`,
+  then the payload (continued with fmt-3 chunks if it ever exceeds the chunk
+  size). Distinct chunk-stream ids keep video (6), audio (7), and data (4)
+  interleaved without head-of-line blocking.
+- **Timestamps** — the data message's timestamp is the current video tag's
+  timestamp (ms), so `onHawkeye` and the frame it describes share a clock; NMS
+  re-emits both into its FLV output in order.
+
+When NMS muxes its http-flv output, each message becomes an **FLV tag**: an
+11-byte header `{ tag_type, data_size:24, timestamp:24+8, stream_id:24=0 }`, the
+payload, then a 4-byte `PreviousTagSize`. `FlvDemux` (`lib/flv.js`) reverses
+exactly this to recover whole tags for verification.
 
 > **Why VLC shows no data track:** VLC's media-info lists only *codec* tracks
 > (video/audio). `onHawkeye` is FLV **script-data**, not a codec, so players
