@@ -10,7 +10,7 @@ DEST="${DEST:-/home/ubuntu/hawkeye-data-stream}"
 SSH_OPTS=(-i "$SSH_KEY" -o StrictHostKeyChecking=no)
 
 rsync -az --delete \
-  --exclude node_modules --exclude .git --exclude '*.ts.tmp' \
+  --exclude node_modules --exclude .git --exclude '*.ts.tmp' --exclude 'scratch*' \
   -e "ssh ${SSH_OPTS[*]}" \
   ./ "$HOST:$DEST/"
 

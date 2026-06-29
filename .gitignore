@@ -2,4 +2,6 @@ node_modules/
 *.log
 *.ts.tmp
 scratch/
+scratch*
+*.ts
 .DS_Store

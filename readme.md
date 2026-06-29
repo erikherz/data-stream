@@ -30,7 +30,22 @@ ssh -i ~/.ssh/brian-may-2026.pem ubuntu@18.188.46.242 \
 
 ## Phases
 
-0. **Foundation** — data-tap + verifier + deploy. ← current
-1. **SRT / MPEG-TS** — TS muxer (video PID + private data PID) over SRT.
-2. **RTMP** — FLV muxer publishing video + AMF data messages to Node-Media-Server.
+0. **Foundation** — data-tap + verifier + deploy. ✅
+1. **SRT / MPEG-TS** — splice a private-data PID (raw protobuf, PTS-synced) into
+   ffmpeg's TS, ship over SRT. ✅ (`lib/ts.js`, `lib/ts-inject.js`,
+   `bin/srt-publish.js`, `bin/ts-extract.js`; `scripts/srt-loopback-test.sh`)
+2. **RTMP** — FLV muxer publishing video + AMF data messages to Node-Media-Server. ← next
 3. **HLS** — in-band ID3 timed metadata in TS segments.
+
+## Phase 1 — run (on the server)
+
+```sh
+# Publish the muxed TS over SRT (listener on :9000):
+node bin/srt-publish.js | srt-live-transmit file://con "srt://:9000?mode=listener"
+
+# Verify the round-trip end-to-end:
+bash scripts/srt-loopback-test.sh
+```
+
+`bin/ts-extract.js file.ts [--pid 0x101]` pulls the data PID out of any captured
+TS and asserts each payload re-decodes to a valid `Frame`.
