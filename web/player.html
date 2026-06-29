@@ -41,6 +41,8 @@
   .analyze .note { margin-left:10px; color:#8b98a5; font-size:12px; }
   .cards { display:flex; gap:12px; margin-top:10px; overflow-x:auto; padding-bottom:6px; }
   .cards[hidden] { display:none; } /* explicit: .cards display:flex would otherwise beat [hidden] */
+  .snaprow { display:flex; gap:18px; flex-wrap:wrap; }
+  .snapcol { flex:1 1 360px; min-width:330px; }
   .card { flex:0 0 auto; min-width:230px; background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 12px; }
   .card .seg { color:var(--home); font-weight:600; margin-bottom:6px; word-break:break-all; }
   .srow { display:flex; justify-content:space-between; gap:10px; padding:3px 0; border-top:1px solid #1b2531; }
@@ -91,9 +93,18 @@
 </section>
 
 <section class="analyze">
-  <strong>Live SRT MPEG-TS — pulled from the gateway every ~5s</strong>
-  <span class="note" id="srt-meta"></span>
-  <div id="srt-card" class="cards"></div>
+  <div class="snaprow">
+    <div class="snapcol">
+      <strong>Live SRT MPEG-TS — pulled from the gateway every ~5s</strong>
+      <span class="note" id="srt-meta"></span>
+      <div id="srt-card" class="cards"></div>
+    </div>
+    <div class="snapcol">
+      <strong>Live RTMP — pulled from Node-Media-Server every ~5s</strong>
+      <span class="note" id="rtmp-meta"></span>
+      <div id="rtmp-card" class="cards"></div>
+    </div>
+  </div>
 </section>
 
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
@@ -386,6 +397,45 @@ async function refreshSrt() {
 }
 refreshSrt();
 setInterval(refreshSrt, 5000);
+
+// --- live RTMP pull: poll a server-side snapshot of the NMS http-flv ---
+const rtmpCard = $('rtmp-card'), rtmpMeta = $('rtmp-meta');
+function renderRtmp(s) {
+  if (!s || s.error) {
+    rtmpCard.innerHTML = `<div class="card"><div class="seg">RTMP pull</div>` +
+      `<div class="srow">${s && s.error ? s.error : 'no snapshot'}</div></div>`;
+    return;
+  }
+  const rows = (s.streams || []).map((st) =>
+    `<div class="srow"><span>${ICON[st.kind] || '•'} ${st.codec}` +
+    `${st.tag ? ` · <span class="pidv">${st.tag}</span>` : ''}</span>` +
+    `<span class="pidv">${st.detail || ''}</span></div>`).join('');
+  const k = s.hawkeye;
+  let kHtml = '<div class="srow">no onHawkeye data seen</div>';
+  if (k) {
+    kHtml =
+      `<div class="srow" style="border-top:1px solid #2a3645;margin-top:6px;padding-top:8px">` +
+      `<span><b>onHawkeye</b> · AMF0 data(18)</span><span>${k.valueLen.toLocaleString()} B</span></div>` +
+      `<div class="srow"><span>carriage</span><span class="pidv" style="font-size:11px">${k.encoding}</span></div>` +
+      `<div class="srow"><span>value head</span><span class="pidv" style="font-size:11px">${hexSpaced(k.valueHead)}…</span></div>` +
+      (k.frame
+        ? `<div class="srow"><span>decoded frame</span><span>#${k.frame.frameId} · ` +
+          `${k.frame.people} people${k.frame.ball ? ` · ball ${k.frame.ball.x}, ${k.frame.ball.y}, ${k.frame.ball.z}` : ''}</span></div>`
+        : '') +
+      `<div class="srow" style="color:#8b98a5;font-size:11px"><span>note</span>` +
+      `<span>FLV script-data — VLC media-info hides it</span></div>`;
+  }
+  rtmpCard.innerHTML = `<div class="card" style="min-width:340px">${rows}${kHtml}</div>`;
+}
+async function refreshRtmp() {
+  try {
+    const s = await (await fetch('/rtmp/snapshot.json?_=' + Date.now(), { cache:'no-store' })).json();
+    rtmpMeta.textContent = s.time ? `updated ${new Date(s.time).toLocaleTimeString()}` : '';
+    renderRtmp(s);
+  } catch (e) { rtmpMeta.textContent = 'snapshot unavailable'; rtmpCard.innerHTML = ''; }
+}
+refreshRtmp();
+setInterval(refreshRtmp, 5000);
 </script>
 </body>
 </html>
