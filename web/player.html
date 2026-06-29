@@ -8,7 +8,12 @@
   :root { --bg:#0b0f14; --panel:#121922; --line:#2a3645; --home:#4cc3ff; --away:#ff6b6b; --ref:#ffd23f; --ball:#ff8c1a; }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:#e6edf3; font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace; }
-  header { padding:12px 16px; border-bottom:1px solid var(--line); }
+  header { padding:12px 16px; border-bottom:1px solid var(--line); position:relative; }
+  .proc-btn { position:absolute; top:12px; right:16px; font:inherit; font-weight:600; padding:8px 16px;
+    border-radius:6px; cursor:pointer; border:1px solid var(--line); background:var(--panel); color:#e6edf3; }
+  .proc-btn.off { background:#16331f; color:#3fb950; border-color:#2c6b3f; }
+  .proc-btn.on  { background:#3a1620; color:#ff6b6b; border-color:#7a2c38; }
+  .proc-btn:disabled { opacity:.55; cursor:default; }
   header h1 { font-size:15px; margin:0 0 2px; font-weight:600; }
   header .note { color:#8b98a5; font-size:12px; }
   .wrap { display:flex; gap:16px; padding:16px; flex-wrap:wrap; align-items:flex-start; }
@@ -43,6 +48,7 @@
 </head>
 <body>
 <header>
+  <button id="proc-toggle" class="proc-btn" disabled>…</button>
   <h1>🏀 Hawkeye over HLS — <span style="color:var(--home)">video, audio</span> + in-band tracking data</h1>
   <span class="note">The skeletons are decoded live from ID3 timed-metadata (PRIV→protobuf) carried inside the HLS segments, synced to the video clock.</span>
 </header>
@@ -230,6 +236,37 @@ function draw() {
   requestAnimationFrame(draw);
 }
 requestAnimationFrame(draw);
+
+// --- processing control: start/stop the server-side publishers ---
+const procBtn = $('proc-toggle');
+let processing = null;
+function setProc(on) {
+  processing = on;
+  procBtn.textContent = on ? 'Stop Processing' : 'Start Processing';
+  procBtn.className = 'proc-btn ' + (on ? 'on' : 'off');
+  procBtn.disabled = false;
+}
+async function refreshProc() {
+  try {
+    const s = await (await fetch('/api/status', { cache: 'no-store' })).json();
+    setProc(s.processing);
+  } catch (e) {
+    procBtn.textContent = 'control offline';
+    procBtn.className = 'proc-btn';
+    procBtn.disabled = true;
+  }
+}
+procBtn.addEventListener('click', async () => {
+  const target = processing ? '/api/stop' : '/api/start';
+  procBtn.disabled = true;
+  procBtn.textContent = processing ? 'Stopping…' : 'Starting…';
+  try {
+    const s = await (await fetch(target, { method: 'POST' })).json();
+    setProc(s.processing);
+  } catch (e) { refreshProc(); }
+});
+refreshProc();
+setInterval(refreshProc, 5000);
 
 // --- manifest panel: reveal + live-refresh the current playlist ---
 const mEl = $('manifest'), mBtn = $('toggle-manifest'), mMeta = $('manifest-meta');

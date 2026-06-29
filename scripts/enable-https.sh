@@ -15,6 +15,7 @@ server {
     ssl_certificate     /etc/letsencrypt/live/luke.moqcdn.net/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/luke.moqcdn.net/privkey.pem;
 
+    location /api/ { proxy_pass http://127.0.0.1:8090; }   # control-server (start/stop)
     location / { try_files $uri $uri/ =404; }
 }
 EOS
