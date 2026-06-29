@@ -1,7 +1,7 @@
 # hawkeye-data-stream
 
 Transport simulated live Hawkeye basketball tracking data over streaming
-protocols: **SRT (in MPEG-TS)**, **RTMP (Enhanced RTMP data track)**, and
+protocols: **SRT (in MPEG-TS)**, **RTMP (AMF0 script-data track)**, and
 **HLS (in-band timed metadata)**. The same raw protobuf frame is the payload in
 every container — only the envelope changes — so the data round-trips bit-for-bit
 and downstream tooling sees a standards-conformant metadata track.
