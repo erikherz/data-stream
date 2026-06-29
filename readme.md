@@ -38,7 +38,24 @@ ssh -i ~/.ssh/brian-may-2026.pem ubuntu@18.188.46.242 \
    messages to a stock Node-Media-Server, which relays both to http-flv. ✅
    (`lib/amf0.js`, `lib/flv.js`, `lib/rtmp-publish.js`, `bin/rtmp-publish.js`,
    `bin/flv-extract.js`; `scripts/{start-nms,rtmp-loopback-test}.sh`)
-3. **HLS** — in-band ID3 timed metadata in TS segments. ← next
+3. **HLS** — carry each frame as an ID3 PRIV frame on a metadata PID
+   (`stream_type 0x15`, tagged `ID3 `); a keyframe segmenter writes the live
+   playlist. ✅ (`lib/id3.js`, `lib/hls-segmenter.js`, `bin/hls-publish.js`,
+   `bin/hls-extract.js`; `scripts/hls-loopback-test.sh`). ffprobe sees the
+   stream as `timed_id3`, so hls.js/Safari parse it natively. `emsg` for
+   CMAF/LL-HLS is a follow-on.
+
+## Phase 3 — run (on the server)
+
+```sh
+node bin/hls-publish.js /tmp/hls hawkeye   # live HLS with ID3 metadata PID
+bash scripts/hls-loopback-test.sh          # publish + verify ID3 round-trip
+# optional playback: (cd /tmp/hls && python3 -m http.server 8081) then load
+#   http://<host>:8081/hawkeye.m3u8 in hls.js / Safari
+```
+
+`bin/hls-extract.js <playlist.m3u8>` reads the segments, unwraps the ID3 PRIV
+frames, and verifies each `Frame`.
 
 ## Phase 2 — run (on the server)
 
