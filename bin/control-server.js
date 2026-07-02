@@ -14,7 +14,7 @@ import { exec, spawn } from 'node:child_process';
 
 const PORT = Number(process.env.CONTROL_PORT ?? 8090);
 const REPO = '/home/ubuntu/hawkeye-data-stream';
-const VIDEO = process.env.VIDEO ?? '/home/ubuntu/capture_12.mp4';
+const VIDEO = process.env.VIDEO ?? '/home/ubuntu/capture_03.mp4';
 const HLS_DIR = '/var/www/html/hls';
 const GW = 'srt://54.69.119.129:20887?mode=caller&latency=200';
 const RTMP_APP = 'live';
