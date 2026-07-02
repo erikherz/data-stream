@@ -1,0 +1,20 @@
+[Unit]
+Description=Origin - SRT snapshot loop (player "Live SRT" card)
+After=network-online.target origin-control.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/origin-app
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+# Pull from the LOCAL self-contained SRT listener (control-server's SRT_GW), not
+# the shared gateway. Snapshot JSON lands in origin's own webroot.
+Environment=PULL_URL=srt://127.0.0.1:9000
+Environment=OUT=/var/www/origin/srt/snapshot.json
+ExecStart=/usr/bin/bash scripts/srt-snapshot-loop.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

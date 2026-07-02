@@ -13,10 +13,20 @@ import fs from 'node:fs';
 import { exec, spawn } from 'node:child_process';
 
 const PORT = Number(process.env.CONTROL_PORT ?? 8090);
-const REPO = '/home/ubuntu/hawkeye-data-stream';
+// These four default to the luke.moqcdn.net deployment. A second deployment on a
+// shared box (e.g. origin.moqcdn.net, coexisting with another app) overrides them
+// via the systemd unit so one codebase serves both hosts:
+//   REPO     working copy dir            HLS_DIR  webroot hls dir (wiped on start)
+//   SRT_GW   where srt-publish is sent   SRT_KILL substring identifying the SRT
+//            (a shared caller gateway on          sender proc to kill on stop
+//            luke; a local listener on origin,    (must NOT match the snapshot
+//            self-contained, so it can't step      puller — luke: the gw port,
+//            on the gateway edge/luke share)        origin: 'mode=listener')
+const REPO = process.env.REPO ?? '/home/ubuntu/hawkeye-data-stream';
 const VIDEO = process.env.VIDEO ?? '/home/ubuntu/capture_03.mp4';
-const HLS_DIR = '/var/www/html/hls';
-const GW = 'srt://54.69.119.129:20887?mode=caller&latency=200';
+const HLS_DIR = process.env.HLS_DIR ?? '/var/www/html/hls';
+const GW = process.env.SRT_GW ?? 'srt://54.69.119.129:20887?mode=caller&latency=200';
+const SRT_KILL = process.env.SRT_KILL ?? '20887';
 const RTMP_APP = 'live';
 const RTMP_NAME = 'hawkeye';
 
@@ -55,10 +65,13 @@ async function start() {
   if (!s.rtmp) { await ensureNms(); launch(RTMP_CMD, '/tmp/pub2.log'); }
 }
 
-// Stop the generators and the push sender (port 20887). Leave the SRT pull-loop
-// and NMS (shared infrastructure) running.
+// Stop the generators and the SRT push sender (identified by SRT_KILL). Leave the
+// SRT pull-loop and NMS (shared infrastructure) running. The [b]racket trick keeps
+// each pattern from self-matching the pkill command line; we build the same guard
+// for SRT_KILL so it works whether it's a port ('20887') or 'mode=listener'.
 async function stop() {
-  await sh("pkill -f '[b]in/hls-publish.js'; pkill -f '[b]in/srt-publish.js'; pkill -f '[b]in/rtmp-publish.js'; pkill -f '[2]0887'; true");
+  const srtKill = `[${SRT_KILL[0]}]${SRT_KILL.slice(1)}`;
+  await sh(`pkill -f '[b]in/hls-publish.js'; pkill -f '[b]in/srt-publish.js'; pkill -f '[b]in/rtmp-publish.js'; pkill -f '${srtKill}'; true`);
 }
 
 http.createServer(async (req, res) => {

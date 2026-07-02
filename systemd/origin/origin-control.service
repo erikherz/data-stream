@@ -1,0 +1,32 @@
+[Unit]
+Description=Origin - control server (Start/Stop API on :8090)
+After=network-online.target origin-nms.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/origin-app
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=REPO=/home/ubuntu/origin-app
+Environment=HLS_DIR=/var/www/origin/hls
+Environment=VIDEO=/home/ubuntu/capture_03.mp4
+# Frame source for the publishers (inherited by the spawned hls/srt/rtmp procs):
+#   spatial = experiencematters.cloud pose SSE (normalized to protobuf)
+#   hawkeye = the original wss protobuf feed
+Environment=SOURCE=spatial
+# Self-contained SRT: publish to a LOCAL listener on the free port :9000 (NOT the
+# shared 54.69.119.129 gateway that edge/luke use) so origin can never step on
+# them. SRT_KILL identifies the sender proc to stop (matches the listener, not the
+# snapshot puller which is a caller to the same port).
+Environment=SRT_GW=srt://:9000?mode=listener&latency=200
+Environment=SRT_KILL=mode=listener
+ExecStart=/usr/bin/node bin/control-server.js
+Restart=always
+RestartSec=3
+# The control server spawns the publishers as detached children; KillMode=process
+# keeps them alive if this unit itself is restarted (the button still owns them).
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target

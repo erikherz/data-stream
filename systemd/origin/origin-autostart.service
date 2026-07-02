@@ -1,0 +1,15 @@
+[Unit]
+Description=Origin - start live processing on boot (POST /api/start)
+After=origin-control.service origin-nms.service
+Wants=origin-control.service origin-nms.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+RemainAfterExit=yes
+# Wait for the control API to answer, then start all three transports. Never
+# fail the boot: exit 0 even if the API never comes up (the button still works).
+ExecStart=/usr/bin/bash -c 'for i in $(seq 1 30); do curl -sf -m 5 -X POST http://127.0.0.1:8090/api/start && exit 0; sleep 2; done; exit 0'
+
+[Install]
+WantedBy=multi-user.target
