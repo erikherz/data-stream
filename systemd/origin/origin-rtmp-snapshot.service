@@ -1,0 +1,18 @@
+[Unit]
+Description=Origin - RTMP snapshot loop (player "Live RTMP" card)
+After=network-online.target origin-nms.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/origin-app
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=FLV_URL=http://127.0.0.1:8000/live/hawkeye.flv
+Environment=OUT=/var/www/origin/rtmp/snapshot.json
+ExecStart=/usr/bin/bash scripts/rtmp-snapshot-loop.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

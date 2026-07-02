@@ -1,0 +1,26 @@
+# nginx vhost for origin.moqcdn.net — a SECOND app on a box already serving
+# edge.moqcdn.net. nginx routes by hostname (SNI); this block uses an EXPLICIT
+# server_name so it wins for origin without a catch-all "_"/default_server that
+# would hijack edge. Install: symlink into sites-enabled, `nginx -t`, reload.
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name origin.moqcdn.net;
+
+    root /var/www/origin;
+    index index.html;
+
+    ssl_certificate     /etc/letsencrypt/live/origin.moqcdn.net/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/origin.moqcdn.net/privkey.pem;
+
+    # Control API (Start/Stop button) -> localhost control server.
+    location /api/ { proxy_pass http://127.0.0.1:8090; }
+
+    # Live HLS segments/playlist must never be cached (sliding window).
+    location /hls/ {
+        add_header Cache-Control "no-store" always;
+        types { application/vnd.apple.mpegurl m3u8; video/mp2t ts; }
+    }
+
+    location / { try_files $uri $uri/ =404; }
+}
