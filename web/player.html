@@ -4,8 +4,16 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Hawkeye HLS — video, audio + in-band tracking data</title>
+<!-- Typography borrowed from the experiencematters.cloud/spatial-feed visualization:
+     Big Shoulders (display), Jersey 15 (jersey numbers), Victor Mono (readouts). -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders:opsz,wght@10..72,700..900&family=Jersey+15&family=Victor+Mono:ital,wght@0,100..700;1,100..700&display=swap" rel="stylesheet">
 <style>
-  :root { --bg:#0b0f14; --panel:#121922; --line:#2a3645; --home:#4cc3ff; --away:#ff6b6b; --ref:#ffd23f; --ball:#ff8c1a; }
+  /* Palette aligned to the spatial-feed viz: near-black hardwood (#070707),
+     white court lines, cyan possession (#5ad1ff), ball orange (#ffb020). */
+  :root { --bg:#0b0f14; --panel:#121922; --line:#2a3645; --home:#5ad1ff; --away:#ff5b6b; --ref:#ffd23f; --ball:#ffb020;
+          --hard:#0a0b0d; --hard2:#05060a; --cline:rgba(233,241,247,.34); }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:#e6edf3; font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace; }
   header { padding:12px 16px; border-bottom:1px solid var(--line); position:relative; }
@@ -14,11 +22,12 @@
   .proc-btn.off { background:#16331f; color:#3fb950; border-color:#2c6b3f; }
   .proc-btn.on  { background:#3a1620; color:#ff6b6b; border-color:#7a2c38; }
   .proc-btn:disabled { opacity:.55; cursor:default; }
-  header h1 { font-size:15px; margin:0 0 2px; font-weight:600; }
+  header h1 { font-family:'Big Shoulders','Arial Narrow',sans-serif; font-size:24px; letter-spacing:.3px;
+    margin:0 0 2px; font-weight:800; text-transform:uppercase; }
   header .note { color:#8b98a5; font-size:12px; }
   .wrap { display:flex; gap:16px; padding:16px; flex-wrap:wrap; align-items:flex-start; }
   video { width:520px; max-width:100%; background:#000; border:1px solid var(--line); border-radius:8px; }
-  canvas { background:#0e151d; border:1px solid var(--line); border-radius:8px; max-width:100%; }
+  canvas { background:#05060a; border:1px solid var(--line); border-radius:8px; max-width:100%; }
   .col { display:flex; flex-direction:column; gap:10px; }
   .hud { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 12px; min-width:230px; }
   .hud div { display:flex; justify-content:space-between; gap:16px; padding:2px 0; }
@@ -111,8 +120,16 @@
 <script src="https://cdn.jsdelivr.net/npm/protobufjs@7.4.0/dist/protobuf.min.js"></script>
 <script src="/ts-analyze.js"></script>
 <script>
-const COURT = { x: 28.65, y: 15.24 };
-const TEAM_COLOR = { 1:'#4cc3ff', 2:'#ff6b6b', 3:'#ffd23f', 0:'#8b98a5' };
+const COURT = { x: 28.65, y: 15.24 };  // full court, metres (94ft x 50ft), length horizontal
+const TEAM_COLOR = { 1:'#5ad1ff', 2:'#ff5b6b', 3:'#ffd23f', 0:'#8b98a5' };
+// NBA court markings in metres (1ft = 0.3048m), mirrored to both ends. Matches the
+// geometry the spatial-feed viz draws (paint 16ft, FT circle r6ft, restricted r4ft,
+// 3pt r23.75ft w/ 22ft corners, basket 5.25ft off the baseline).
+const CRT = {
+  cy: 15.24/2, basket: 1.60, rim: 0.2286, restricted: 1.219,
+  paintW: 4.877, paintLen: 5.79, ftR: 1.829, centerR: 1.829,
+  three: 7.239, cornerY: 0.914, cornerX: 4.326,
+};
 const BONES = [
   [0,1],[1,2],[2,13],[13,14],[14,15],[15,16],
   [2,3],[2,4],[3,5],[5,7],[7,9],[9,11],
@@ -210,12 +227,49 @@ function pickFrame(t) {
   return best;
 }
 
+// stroke a polyline / arc given in COURT metres, so the slightly anisotropic
+// x/y canvas scale is handled per-point (arcs map to true ellipses, not circles).
+function cLine(x1,y1,x2,y2){ ctx.beginPath(); ctx.moveTo(mapX(x1),mapY(y1)); ctx.lineTo(mapX(x2),mapY(y2)); ctx.stroke(); }
+function cArc(cx,cy,r,a0,a1,fill){
+  ctx.beginPath();
+  const n = 48;
+  for (let i=0;i<=n;i++){ const a=a0+(a1-a0)*i/n; const px=mapX(cx+r*Math.cos(a)), py=mapY(cy+r*Math.sin(a));
+    i ? ctx.lineTo(px,py) : ctx.moveTo(px,py); }
+  fill ? ctx.fill() : ctx.stroke();
+}
+function halfCourt(x0, dir){            // dir = +1 (left end) or -1 (right end)
+  const bx = x0 + dir*CRT.basket, cy = CRT.cy;
+  // paint / key
+  const py0 = cy - CRT.paintW/2, py1 = cy + CRT.paintW/2, px1 = x0 + dir*CRT.paintLen;
+  ctx.strokeRect(Math.min(mapX(x0),mapX(px1)), mapY(py0), Math.abs(mapX(px1)-mapX(x0)), mapY(py1)-mapY(py0));
+  // free-throw circle (solid top half toward centre)
+  cArc(px1, cy, CRT.ftR, -Math.PI/2, Math.PI/2, false);
+  // restricted-area arc under the basket
+  cArc(bx, cy, CRT.restricted, dir>0?-Math.PI/2:Math.PI/2, dir>0?Math.PI/2:3*Math.PI/2, false);
+  // hoop + backboard
+  cArc(bx, cy, CRT.rim, 0, Math.PI*2, false);
+  cLine(x0 + dir*1.22, cy-0.9, x0 + dir*1.22, cy+0.9);
+  // three-point line: straight corners then the arc
+  const cyTop = CRT.cornerY, cyBot = COURT.y - CRT.cornerY, cxx = x0 + dir*CRT.cornerX;
+  cLine(x0, cyTop, cxx, cyTop);
+  cLine(x0, cyBot, cxx, cyBot);
+  const a = Math.atan2(cyTop - cy, (cxx - bx)*dir);   // angle to the corner meet point
+  cArc(bx, cy, CRT.three, dir>0? -a : Math.PI+a, dir>0? a : Math.PI-a, false);
+}
 function drawCourt() {
   ctx.clearRect(0,0,cv.width,cv.height);
-  ctx.strokeStyle = '#2a3645'; ctx.lineWidth = 1.5;
-  ctx.strokeRect(16,12,cv.width-32,cv.height-24);
-  ctx.beginPath(); ctx.moveTo(cv.width/2,12); ctx.lineTo(cv.width/2,cv.height-12); ctx.stroke();
-  ctx.beginPath(); ctx.arc(cv.width/2,cv.height/2,(1.8/COURT.y)*(cv.height-24),0,Math.PI*2); ctx.stroke();
+  // hardwood floor
+  const g = ctx.createLinearGradient(0,0,0,cv.height);
+  g.addColorStop(0,'#0b0d10'); g.addColorStop(1,'#05060a');
+  ctx.fillStyle = g; ctx.fillRect(0,0,cv.width,cv.height);
+  ctx.strokeStyle = 'rgba(233,241,247,.34)';
+  ctx.lineWidth = 1.4; ctx.lineJoin = 'round';
+  // boundary + half-court line + centre circle
+  ctx.strokeRect(mapX(0), mapY(0), mapX(COURT.x)-mapX(0), mapY(COURT.y)-mapY(0));
+  cLine(COURT.x/2, 0, COURT.x/2, COURT.y);
+  cArc(COURT.x/2, CRT.cy, CRT.centerR, 0, Math.PI*2, false);
+  halfCourt(0, +1);
+  halfCourt(COURT.x, -1);
 }
 
 function draw() {
@@ -226,21 +280,32 @@ function draw() {
     const f = item.frame;
     for (const p of f.people || []) {
       const col = TEAM_COLOR[p.team || 0];
-      ctx.strokeStyle = col; ctx.globalAlpha = 0.55; ctx.lineWidth = 1;
+      // skeleton, with a soft team-coloured glow (echoes the 3D viz's lit markers)
+      ctx.strokeStyle = col; ctx.lineWidth = 1.4; ctx.lineCap = 'round';
+      ctx.shadowColor = col; ctx.shadowBlur = 6; ctx.globalAlpha = 0.85;
       for (const [a,b] of BONES) {
         const ja = p.joints[a], jb = p.joints[b];
         if (!ja || !jb) continue;
         ctx.beginPath(); ctx.moveTo(mapX(ja.pos.x),mapY(ja.pos.y)); ctx.lineTo(mapX(jb.pos.x),mapY(jb.pos.y)); ctx.stroke();
       }
-      ctx.globalAlpha = 1;
+      ctx.shadowBlur = 0; ctx.globalAlpha = 1;
       const head = p.joints[0] || p.joints[16];
-      if (head) { ctx.fillStyle = col; ctx.beginPath(); ctx.arc(mapX(head.pos.x),mapY(head.pos.y),3,0,Math.PI*2); ctx.fill(); }
-      const pelvis = p.joints[16];
-      if (pelvis && p.jersey) { ctx.fillStyle='#0b0f14'; ctx.font='9px monospace'; ctx.fillText(p.jersey, mapX(pelvis.pos.x)-3, mapY(pelvis.pos.y)+3); }
+      if (head) { ctx.fillStyle = col; ctx.beginPath(); ctx.arc(mapX(head.pos.x),mapY(head.pos.y),3.2,0,Math.PI*2); ctx.fill(); }
+      // jersey number in the 'Jersey 15' font, white with a dark outline for legibility
+      const pelvis = p.joints[16] || p.joints[2];
+      if (pelvis && p.jersey) {
+        ctx.font = "13px 'Jersey 15', monospace"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        const jx = mapX(pelvis.pos.x), jy = mapY(pelvis.pos.y) - 9;
+        ctx.lineWidth = 2.5; ctx.strokeStyle = 'rgba(0,0,0,.85)'; ctx.strokeText(p.jersey, jx, jy);
+        ctx.fillStyle = '#f4f8fb'; ctx.fillText(p.jersey, jx, jy);
+        ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
+      }
     }
     if (f.ball) {
-      ctx.fillStyle = '#ff8c1a'; ctx.beginPath();
-      ctx.arc(mapX(f.ball.pos.x), mapY(f.ball.pos.y), 5, 0, Math.PI*2); ctx.fill();
+      const bx = mapX(f.ball.pos.x), by = mapY(f.ball.pos.y);
+      ctx.shadowColor = '#ffb020'; ctx.shadowBlur = 10;
+      ctx.fillStyle = '#ffb020'; ctx.beginPath(); ctx.arc(bx, by, 5, 0, Math.PI*2); ctx.fill();
+      ctx.shadowBlur = 0;
     }
     const c = f.clock || {};
     $('fid').textContent = toNum(f.frameId);
