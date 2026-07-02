@@ -9,6 +9,10 @@ User=ubuntu
 WorkingDirectory=/home/ubuntu/hawkeye-data-stream
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 Environment=VIDEO=/home/ubuntu/capture_12.mp4
+# Frame source for the publishers (inherited by the spawned hls/srt/rtmp procs):
+#   spatial = experiencematters.cloud pose SSE (normalized to protobuf)
+#   hawkeye = the original wss protobuf feed
+Environment=SOURCE=spatial
 ExecStart=/usr/bin/node bin/control-server.js
 Restart=always
 RestartSec=3
