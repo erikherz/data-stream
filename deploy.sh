@@ -5,7 +5,8 @@
 set -euo pipefail
 
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/brian-may-2026.pem}"
-HOST="${HOST:-ubuntu@18.188.46.242}"
+# Use the DNS name, not a hardcoded IP: the box's public IP changes on stop/start.
+HOST="${HOST:-ubuntu@luke.moqcdn.net}"
 DEST="${DEST:-/home/ubuntu/hawkeye-data-stream}"
 SSH_OPTS=(-i "$SSH_KEY" -o StrictHostKeyChecking=no)
 

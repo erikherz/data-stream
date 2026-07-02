@@ -1,0 +1,16 @@
+[Unit]
+Description=Hawkeye - SRT snapshot loop (player "Live SRT" card)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/hawkeye-data-stream
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/bash scripts/srt-snapshot-loop.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

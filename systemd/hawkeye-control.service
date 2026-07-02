@@ -1,0 +1,20 @@
+[Unit]
+Description=Hawkeye - control server (Start/Stop API on :8090)
+After=network-online.target hawkeye-nms.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/hawkeye-data-stream
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=VIDEO=/home/ubuntu/capture_12.mp4
+ExecStart=/usr/bin/node bin/control-server.js
+Restart=always
+RestartSec=3
+# The control server spawns the publishers as detached children; KillMode=process
+# keeps them alive if this unit itself is restarted (the button still owns them).
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target

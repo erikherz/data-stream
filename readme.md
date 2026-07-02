@@ -449,3 +449,24 @@ webroot every ~5 s for the player's "Live RTMP" card.
 ssh -i ~/.ssh/<key>.pem ubuntu@<server-ip> \
   'cd hawkeye-data-stream && npm run tap:stats 10'
 ```
+
+### Run as a service (survives reboots / crashes)
+
+`scripts/install-systemd.sh` installs five `Restart=always` units from
+`systemd/` so the stack comes back on boot and self-heals on crash:
+
+| Unit | Role |
+|------|------|
+| `hawkeye-nms` | Node-Media-Server (RTMP :1935, http-flv :8000) |
+| `hawkeye-control` | control server / Start-Stop API (:8090) |
+| `hawkeye-srt-snapshot` | SRT snapshot loop → player "Live SRT" card |
+| `hawkeye-rtmp-snapshot` | RTMP snapshot loop → player "Live RTMP" card |
+| `hawkeye-autostart` | oneshot: `POST /api/start` on boot (starts all publishers) |
+
+```sh
+bash scripts/install-systemd.sh                    # install + enable + start
+systemctl is-active hawkeye-{nms,control,srt-snapshot,rtmp-snapshot,autostart}
+```
+
+The three publishers (HLS/SRT/RTMP) are started by the control server (the
+Start/Stop button, and `hawkeye-autostart` on boot), not as their own units.

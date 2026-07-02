@@ -1,0 +1,16 @@
+[Unit]
+Description=Hawkeye - RTMP snapshot loop (player "Live RTMP" card)
+After=network-online.target hawkeye-nms.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/hawkeye-data-stream
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/bash scripts/rtmp-snapshot-loop.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
