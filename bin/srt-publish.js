@@ -12,7 +12,7 @@
 // All logging goes to stderr so it never corrupts the TS on stdout.
 
 import { spawn } from 'node:child_process';
-import { DataTap } from '../lib/data-tap.js';
+import { createFrameSource } from '../lib/frame-source.js';
 import { TsInjector } from '../lib/ts-inject.js';
 import { KLVA_REGISTRATION_DESCRIPTOR } from '../lib/ts.js';
 import { klvWrap } from '../lib/klv.js';
@@ -49,7 +49,7 @@ const injector = new TsInjector({
 });
 ffmpeg.stdout.pipe(injector).pipe(process.stdout);
 
-const tap = new DataTap();
+const tap = createFrameSource();
 tap.on('open', () => log(`feed connected: ${tap.url}`));
 tap.on('error', (err) => log(`feed error: ${err.message}`));
 tap.on('frame', (f) => injector.pushFrame(f.raw));

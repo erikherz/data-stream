@@ -9,7 +9,7 @@
 // Usage: node bin/hls-publish.js [outDir=/tmp/hls] [name=hawkeye]
 
 import { spawn } from 'node:child_process';
-import { DataTap } from '../lib/data-tap.js';
+import { createFrameSource } from '../lib/frame-source.js';
 import { TsInjector } from '../lib/ts-inject.js';
 import { HlsSegmenter } from '../lib/hls-segmenter.js';
 import { buildId3 } from '../lib/id3.js';
@@ -30,7 +30,7 @@ const injector = new TsInjector({
 const segmenter = new HlsSegmenter({ dir: outDir, name });
 injector.on('data', (d) => segmenter.feed(d));
 
-const tap = new DataTap();
+const tap = createFrameSource();
 tap.on('open', () => log(`feed connected: ${tap.url}`));
 tap.on('error', (err) => log(`feed error: ${err.message}`));
 tap.on('frame', (f) => injector.pushFrame(f.raw));

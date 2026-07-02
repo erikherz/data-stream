@@ -8,7 +8,7 @@
 // Usage: node bin/rtmp-publish.js [app=live] [stream=hawkeye]
 
 import { spawn } from 'node:child_process';
-import { DataTap } from '../lib/data-tap.js';
+import { createFrameSource } from '../lib/frame-source.js';
 import { RtmpPublisher } from '../lib/rtmp-publish.js';
 import { FlvDemux, FLV_TAG_VIDEO } from '../lib/flv.js';
 
@@ -23,7 +23,7 @@ const pending = [];
 let lastVideoTs = 0;
 let ffmpeg = null;
 
-const tap = new DataTap();
+const tap = createFrameSource();
 tap.on('open', () => log(`feed connected: ${tap.url}`));
 tap.on('error', (err) => log(`feed error: ${err.message}`));
 tap.on('frame', (f) => {
