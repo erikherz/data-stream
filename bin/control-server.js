@@ -5,8 +5,9 @@
 // /api/* to it.
 //
 //   GET  /api/status -> { hls, srt, rtmp, processing }
-//   POST /api/start  -> start HLS + SRT + RTMP, returns status
-//   POST /api/stop   -> stop them, returns status
+//   POST /api/start   -> start HLS + SRT + RTMP, returns status
+//   POST /api/stop    -> stop them, returns status
+//   POST /api/restart -> stop then start (re-align video+data to tip-off)
 
 import http from 'node:http';
 import fs from 'node:fs';
@@ -87,6 +88,14 @@ http.createServer(async (req, res) => {
     } else if (req.url === '/api/stop' && req.method === 'POST') {
       await stop();
       await new Promise((r) => setTimeout(r, 800));
+      res.end(JSON.stringify(await status()));
+    } else if (req.url === '/api/restart' && req.method === 'POST') {
+      // Re-align: kill the publishers and relaunch them, so the video restarts from
+      // tip-off and the pose tap reconnects from tipoff at the same wall-clock moment.
+      await stop();
+      await new Promise((r) => setTimeout(r, 1000));
+      await start();
+      await new Promise((r) => setTimeout(r, 1500));
       res.end(JSON.stringify(await status()));
     } else {
       res.statusCode = 404;

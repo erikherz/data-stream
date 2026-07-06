@@ -24,11 +24,13 @@ const DATA_PID = Number(process.env.DATA_PID ?? 0x102);
 
 const log = (...a) => console.error('[srt-publish]', ...a);
 
+// VIDEO_LOOP=0 plays the source once (from tip-off) and stops; the default loops.
+const LOOP = (process.env.VIDEO_LOOP ?? '1') !== '0' ? ['-stream_loop', '-1'] : [];
 const ffmpeg = spawn(
   'ffmpeg',
   [
     '-hide_banner', '-loglevel', 'error',
-    '-re', '-stream_loop', '-1', '-i', VIDEO,
+    '-re', ...LOOP, '-i', VIDEO,
     '-c:v', 'copy', '-c:a', 'aac', '-ac', '2', '-b:a', '128k',
     '-pat_period', '0.2',
     '-mpegts_flags', '+resend_headers',

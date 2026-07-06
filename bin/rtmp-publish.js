@@ -37,9 +37,11 @@ pub.on('close', () => { log('rtmp closed'); shutdown(); });
 pub.on('ready', async () => {
   log(`published rtmp://127.0.0.1/${app}/${stream}; starting ffmpeg + feed`);
   await tap.start();
+  // VIDEO_LOOP=0 plays the source once (from tip-off) and stops; the default loops.
+  const LOOP = (process.env.VIDEO_LOOP ?? '1') !== '0' ? ['-stream_loop', '-1'] : [];
   ffmpeg = spawn('ffmpeg', [
     '-hide_banner', '-loglevel', 'error',
-    '-re', '-stream_loop', '-1', '-i', VIDEO,
+    '-re', ...LOOP, '-i', VIDEO,
     '-c:v', 'copy', '-c:a', 'aac', '-ac', '2', '-b:a', '128k',
     '-f', 'flv', '-flvflags', 'no_duration_filesize', 'pipe:1',
   ], { stdio: ['ignore', 'pipe', 'inherit'] });

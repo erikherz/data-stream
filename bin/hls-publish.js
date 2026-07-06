@@ -36,9 +36,12 @@ tap.on('error', (err) => log(`feed error: ${err.message}`));
 tap.on('frame', (f) => injector.pushFrame(f.raw));
 await tap.start();
 
+// VIDEO_LOOP=0 plays the source once (from tip-off) and stops; the default loops.
+// Looping re-runs the ~9 min clip and drifts out of sync with the continuous pose feed.
+const LOOP = (process.env.VIDEO_LOOP ?? '1') !== '0' ? ['-stream_loop', '-1'] : [];
 const ffmpeg = spawn('ffmpeg', [
   '-hide_banner', '-loglevel', 'error',
-  '-re', '-stream_loop', '-1', '-i', VIDEO,
+  '-re', ...LOOP, '-i', VIDEO,
   '-c:a', 'aac', '-ac', '2', '-b:a', '128k',
   '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency', '-crf', '23',
   '-g', '60', '-keyint_min', '60', '-sc_threshold', '0',
