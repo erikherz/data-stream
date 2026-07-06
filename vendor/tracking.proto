@@ -103,6 +103,8 @@ message Frame {
   GameClock clock = 3;
   repeated Person people = 4;       // up to 13 (10 players + 3 officials)
   Ball ball = 5;
+  uint32 home_score = 6;            // live scoreboard (home/away per the feed)
+  uint32 away_score = 7;
 }
 
 // Sent once when a client connects, describing the stream.
