@@ -148,7 +148,9 @@ function onSamples(samples) {
     if (!msg.frame) continue;
     cueCount++;
     frames.push({ pts: s.pts, frame: msg.frame });
-    if (frames.length > 2000) frames.splice(0, frames.length - 2000);
+    // Keep ~66s of frames at 60Hz so the data buffer always spans the (now deeper)
+    // video back+forward buffer, no matter how far back in the DVR window we play.
+    if (frames.length > 4000) frames.splice(0, frames.length - 4000);
   }
   $('cues').textContent = cueCount;
 }
@@ -157,9 +159,41 @@ function onSamples(samples) {
 const video = $('video');
 const SRC = '/hls/receiver.m3u8';
 if (Hls.isSupported()) {
-  const hls = new Hls({ lowLatencyMode: true, liveSyncDuration: 4, enableWorker: true });
+  // Reliability over latency (view-only rebroadcast, latency doesn't matter): no
+  // low-latency mode (it hugs the live edge and stalls/seeks on any jitter);
+  // instead sit ~8s back with a deep fwd/back buffer, tolerate small gaps, and
+  // auto-recover from fatal errors. Bounds stay under the receiver's DVR window
+  // (srt-receive.js HLS_WINDOW≈10 segs ≈ 20s).
+  const hls = new Hls({
+    enableWorker: true,
+    lowLatencyMode: false,
+    liveSyncDuration: 8,           // play ~8s (≈4 segments) behind the live edge
+    liveMaxLatencyDuration: 18,    // only force a resync if we fall >18s behind
+    maxBufferLength: 20,           // fill up to ~20s ahead
+    maxMaxBufferLength: 40,
+    backBufferLength: 20,          // retain ~20s behind for stability
+    maxBufferHole: 0.5,            // tolerate small gaps without stalling
+    nudgeMaxRetry: 20,             // be patient nudging through a stall
+    fragLoadingMaxRetry: 8,
+    manifestLoadingMaxRetry: 6,
+    levelLoadingMaxRetry: 6,
+  });
   hls.on(Hls.Events.MANIFEST_PARSED, () => { $('hls').textContent='playing'; $('hls').className='status ok'; video.play().catch(()=>{}); });
-  hls.on(Hls.Events.ERROR, (e,d) => { if (d.fatal) { $('hls').textContent='error: '+d.details; $('hls').className='status bad'; } });
+  // Auto-recover from fatal errors instead of dying: resume the loader on a
+  // network stall, rebuild the decode pipeline on a media error.
+  let mediaRecover = 0;
+  hls.on(Hls.Events.ERROR, (e, d) => {
+    if (!d.fatal) return;
+    $('hls').textContent = 'recovering… (' + d.details + ')'; $('hls').className = 'status warn';
+    if (d.type === Hls.ErrorTypes.NETWORK_ERROR) {
+      hls.startLoad();
+    } else if (d.type === Hls.ErrorTypes.MEDIA_ERROR) {
+      if (mediaRecover++ < 3) hls.recoverMediaError();
+      else { $('hls').textContent = 'error: ' + d.details; $('hls').className = 'status bad'; }
+    } else {
+      $('hls').textContent = 'error: ' + d.details; $('hls').className = 'status bad';
+    }
+  });
   hls.on(Hls.Events.FRAG_PARSING_METADATA, (e, d) => onSamples(d.samples || []));
   hls.loadSource(SRC);
   hls.attachMedia(video);

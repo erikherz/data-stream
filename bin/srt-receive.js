@@ -42,6 +42,9 @@ const name = process.argv[3] ?? 'receiver';
 const META_PID = Number(process.env.META_PID ?? 0x102);
 const SRT_PORT = Number(process.env.SRT_PORT ?? 9000);
 const SRT_LATENCY = Number(process.env.SRT_LATENCY ?? 200);
+// DVR window: how many segments the playlist keeps live. ~10 × 2s ≈ 20s of buffer
+// headroom so the player can sit well back from the live edge and ride out jitter.
+const HLS_WINDOW = Number(process.env.HLS_WINDOW ?? 10);
 const SRT_URL = process.env.SRT_URL
   ?? `srt://:${SRT_PORT}?mode=listener&latency=${SRT_LATENCY}`;
 
@@ -54,7 +57,7 @@ const injector = new TsInjector({
   esDescriptor: ID3_REGISTRATION_DESCRIPTOR,  // tag the stream as 'ID3 '
   wrapPayload: (raw) => buildId3(raw),        // each frame -> one ID3 tag (PRIV)
 });
-const segmenter = new HlsSegmenter({ dir: outDir, name });
+const segmenter = new HlsSegmenter({ dir: outDir, name, windowSize: HLS_WINDOW });
 injector.on('data', (d) => segmenter.feed(d));
 
 // --- SRT receiver: verbatim source TS on stdout ---

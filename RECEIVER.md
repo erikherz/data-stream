@@ -75,6 +75,16 @@ sync (which needs OCR of the burned-in clock). A tight `queue`/`latency` with a
 mismatched on-screen clock just means the video clip and the data feed are
 independent content — the transport is doing its job.
 
+## Playback reliability (not latency)
+
+`web/receiver.html`'s hls.js is tuned for reliability: `lowLatencyMode` is off, so
+it sits ~8s back from the live edge with a deep fwd/back buffer, tolerates small
+gaps instead of stalling/seeking, and auto-recovers from fatal network/media
+errors. `bin/srt-receive.js` widens the DVR window to `HLS_WINDOW` = 10 (~20s) so
+there is headroom for that buffer, and the client keeps ~66s of decoded frames so
+the overlay always spans the played position. (Same treatment as the origin
+player in `web/player.html`.)
+
 ## Feeding the receiver: `systemd/origin-gateway-feed.service`
 
 The receiver pulls the gateway egress; something must publish to the gateway
