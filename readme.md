@@ -258,9 +258,10 @@ timeline. The tag, byte for byte:
   floor so a dense-keyframe source doesn't produce sub-second segments;
 - prepends the cached PAT/PMT to every segment so each `.ts` is independently
   decodable;
-- maintains a sliding window (default 6 segments), deletes evicted `.ts` files,
-  and writes the playlist atomically (`.tmp` + `rename`) so a client never reads
-  a half-written manifest.
+- maintains a sliding window (segmenter default 6; `bin/hls-publish.js` sets it
+  to `HLS_WINDOW` = 10 ≈ 20s of DVR so the player can buffer well back from the
+  live edge), deletes evicted `.ts` files, and writes the playlist atomically
+  (`.tmp` + `rename`) so a client never reads a half-written manifest.
 
 The playlist is a standard RFC 8216 live media playlist:
 
@@ -295,7 +296,16 @@ the engine:
 
 A render loop keyed on `video.currentTime` picks the nearest buffered frame and
 draws the 13 skeletons + ball, so the overlay stays locked to the picture (the
-on-screen `skew` readout shows `currentTime − frame.pts`).
+on-screen `skew` readout shows `currentTime − frame.pts`, typically ~0.00s).
+
+hls.js is tuned for **reliability over latency** (this is a file-based demo):
+`lowLatencyMode` is off, so it sits ~8s back from the live edge with a deep
+forward/back buffer and tolerates small gaps rather than stalling and seeking;
+fatal network/media errors auto-recover instead of ending playback. The client
+keeps ~66s of decoded frames so the overlay always spans the played position.
+Note this locks the overlay to the *video clock*, not to real game time — if the
+source video and the data feed are independent renditions, their game-clocks can
+still differ (content drift); that is not a transport/sync problem.
 
 ```sh
 node bin/hls-publish.js /tmp/hls hawkeye   # live HLS with the ID3 metadata PID
