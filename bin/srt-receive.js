@@ -45,6 +45,11 @@ const SRT_LATENCY = Number(process.env.SRT_LATENCY ?? 200);
 // DVR window: how many segments the playlist keeps live. ~10 × 2s ≈ 20s of buffer
 // headroom so the player can sit well back from the live edge and ride out jitter.
 const HLS_WINDOW = Number(process.env.HLS_WINDOW ?? 10);
+// Stall watchdog: srt-live-transmit (caller) can hold a dead socket after the
+// upstream publisher cycles — the process stays alive but no TS arrives, so
+// systemd's Restart=always never fires. If NO new segment is produced for this
+// long, exit non-zero so systemd re-runs us with a fresh SRT pull.
+const STALL_MS = Number(process.env.SRT_STALL_MS ?? 12000);
 const SRT_URL = process.env.SRT_URL
   ?? `srt://:${SRT_PORT}?mode=listener&latency=${SRT_LATENCY}`;
 
@@ -70,7 +75,11 @@ const ffmpeg = spawn('ffmpeg', [
   '-fflags', '+genpts', '-i', 'pipe:0',
   '-map', '0:v:0', '-map', '0:a:0?',          // video + audio if present
   '-c:a', 'aac', '-ac', '2', '-b:a', '128k',
-  '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency', '-crf', '23',
+  // ultrafast (env-overridable): this box is 2 cores and shares CPU with origin's
+  // full stack + the gateway feed; a cheaper preset keeps the re-encode from
+  // starving under load (the cause of receiver stalls). Bitrate is higher but
+  // fine for a view-only rebroadcast.
+  '-c:v', 'libx264', '-preset', process.env.X264_PRESET ?? 'ultrafast', '-tune', 'zerolatency', '-crf', '23',
   '-g', '60', '-keyint_min', '60', '-sc_threshold', '0',
   '-force_key_frames', 'expr:gte(t,n_forced*2)',
   '-f', 'mpegts', '-mpegts_flags', '+resend_headers', '-pat_period', '0.2', 'pipe:1',
@@ -169,8 +178,22 @@ srt.stdout.pipe(klv);
 log(`listening ${SRT_URL}`);
 log(`writing HLS to ${outDir}/${name}.m3u8 (metadata PID 0x${META_PID.toString(16)})`);
 
+// Watchdog liveness: track when the segment count last advanced (segments follow
+// the video keyframes, so this proves TS is actually arriving — a data-only dry
+// spell keeps producing segments and won't false-trigger). Grace-start from now
+// so the initial SRT handshake + first keyframe don't count as a stall.
+let lastSeq = segmenter.seq;
+let lastSeqAt = Date.now();
+
 const statsTimer = setInterval(() => {
   writeSnapshot();
+  if (segmenter.seq !== lastSeq) { lastSeq = segmenter.seq; lastSeqAt = Date.now(); }
+  else if (Date.now() - lastSeqAt > STALL_MS) {
+    log(`STALL: no new segment for ${Math.round((Date.now() - lastSeqAt) / 1000)}s — ` +
+        `exiting for a fresh SRT pull (systemd will restart)`);
+    for (const p of [srt, ffmpeg]) { try { p.kill('SIGKILL'); } catch { /* ignore */ } }
+    process.exit(1);
+  }
   log(`segments=${segmenter.seq} window=${segmenter.window.length} ` +
       `klv=${klv.frames} klvErr=${klv.errors} injected=${injector.injected} ` +
       `queue=${injector.pending.length} lat=${latencyMs ?? '—'}ms`);
