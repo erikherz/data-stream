@@ -3,6 +3,9 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders:opsz,wght@10..72,700..900&family=Jersey+15&display=swap" rel="stylesheet">
 <title>Hawkeye rebroadcast — SRT → HLS, video + in-band tracking data</title>
 <style>
   :root { --bg:#0b0f14; --panel:#121922; --line:#2a3645; --home:#4cc3ff; --away:#ff6b6b; --ref:#ffd23f; --ball:#ff8c1a; }
@@ -35,6 +38,20 @@
   .manifest .note { margin-left:10px; color:#8b98a5; font-size:12px; }
   .manifest pre { margin:10px 0 0; padding:12px 14px; background:var(--panel); border:1px solid var(--line);
     border-radius:8px; max-height:320px; overflow:auto; white-space:pre-wrap; word-break:break-all; color:#cfe3f5; }
+  /* live scoreboard (in-band score + game clock, decoded from the feed) */
+  .scorebar { display:flex; align-items:center; justify-content:center; gap:20px; flex-wrap:wrap;
+    padding:10px 16px; border-bottom:1px solid var(--line); background:linear-gradient(180deg,#0e141b,#0a0e13); }
+  .scorebar .team { display:flex; align-items:center; gap:12px; }
+  .scorebar .tname { font-family:'Big Shoulders','Arial Narrow',sans-serif; font-weight:800; font-size:16px;
+    letter-spacing:.6px; text-transform:uppercase; color:#8b98a5; }
+  .scorebar .team.home .tname { color:var(--home); }
+  .scorebar .team.away .tname { color:var(--away); }
+  .scorebar .tscore { font-family:'Jersey 15',monospace; font-size:40px; line-height:.9; min-width:46px; text-align:center; color:#f4f8fb; }
+  .scorebar .mid { display:flex; flex-direction:column; align-items:center; gap:1px; padding:0 6px; min-width:96px; }
+  .scorebar .period { font-family:'Big Shoulders',sans-serif; font-weight:800; letter-spacing:1.5px; font-size:13px; color:#e6edf3; }
+  .scorebar .gclock { font-family:'Jersey 15',monospace; font-size:30px; line-height:1; color:#f4f8fb; }
+  .scorebar .shot { font-size:11px; font-weight:700; color:var(--ball); letter-spacing:.5px; }
+  .scorebar .sep { color:#2a3645; font-size:24px; }
 </style>
 </head>
 <body>
@@ -42,6 +59,17 @@
   <h1>🏀 Hawkeye rebroadcast <span class="badge">view-only · SRT → HLS</span></h1>
   <span class="note">This station receives the SRT feed from the origin, re-muxes it to HLS, and decodes the skeletons live from ID3 timed-metadata (PRIV→protobuf) carried inside the segments, synced to the video clock.</span>
 </header>
+<div id="scoreboard" class="scorebar">
+  <div class="team home"><span class="tname">Home</span><span class="tscore" id="sb-home">0</span></div>
+  <span class="sep">–</span>
+  <div class="mid">
+    <span class="period" id="sb-period">—</span>
+    <span class="gclock" id="sb-gclock">--:--</span>
+    <span class="shot"><span id="sb-shot">—</span>″ shot clock</span>
+  </div>
+  <span class="sep">–</span>
+  <div class="team away"><span class="tscore" id="sb-away">0</span><span class="tname">Away</span></div>
+</div>
 <div class="wrap">
   <div class="col">
     <video id="video" controls autoplay muted playsinline></video>
@@ -104,6 +132,11 @@ const BONES = [
 ];
 const $ = (id) => document.getElementById(id);
 const toNum = (v) => v == null ? 0 : (typeof v === 'object' && v.toNumber) ? v.toNumber() : Number(v);
+const PERIOD_LABEL = ['—','1ST','2ND','3RD','4TH'];
+const fmtPeriod = (p) => !p ? '—' : (p <= 4 ? PERIOD_LABEL[p] : 'OT' + (p - 4));
+// seconds -> "M:SS" for a minute or more, else tenths ("24.9") like a real NBA clock.
+const fmtClock = (s) => s == null ? '--:--'
+  : (s >= 60 ? Math.floor(s/60) + ':' + String(Math.floor(s%60)).padStart(2,'0') : s.toFixed(1));
 
 // --- ID3v2.4 PRIV unwrap (mirror of lib/id3.js) ---
 const unsync = (b, o) => ((b[o]&0x7f)<<21)|((b[o+1]&0x7f)<<14)|((b[o+2]&0x7f)<<7)|(b[o+3]&0x7f);
@@ -265,6 +298,12 @@ function draw() {
     $('sclock').textContent = c.shotClockSeconds != null ? c.shotClockSeconds.toFixed(1)+'s' : '—';
     $('ball').textContent = f.ball ? (f.ball.inPossession ? 'held #'+(f.ball.possessionPersonId||'?') : 'loose') : '—';
     $('skew').textContent = (video.currentTime - item.pts).toFixed(2)+'s';
+    // live scoreboard bar (in-band score + game clock, synced to the video frame)
+    $('sb-home').textContent = f.homeScore ?? 0;
+    $('sb-away').textContent = f.awayScore ?? 0;
+    $('sb-period').textContent = fmtPeriod(c.period);
+    $('sb-gclock').textContent = c.gameClockSeconds != null ? fmtClock(c.gameClockSeconds) : '--:--';
+    $('sb-shot').textContent = c.shotClockSeconds != null ? Math.ceil(c.shotClockSeconds) : '—';
   }
   requestAnimationFrame(draw);
 }
