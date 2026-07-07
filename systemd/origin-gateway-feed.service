@@ -1,0 +1,24 @@
+[Unit]
+# Origin -> gateway SRT feed: the live source that powers the edge.moqcdn.net
+# receiver (hawkeye-receiver on the edge box pulls srt://<gw>:20888). Runs on the
+# origin box from the origin-app working copy. Without this the edge receiver stays
+# up but its HLS goes stale (no source). Coexists with origin's own local :9000
+# publisher (a separate process); this one dials OUT to the gateway ingress :20887.
+Description=Origin -> gateway SRT feed (source for the edge receiver)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/origin-app
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=VIDEO=/home/ubuntu/capture_03_tip.mp4
+# node emits the muxed TS (video+AAC+synchronous KLV) on stdout; a dumb SRT sender
+# dials the gateway ingress as a caller. exec so srt-live-transmit is the leaf.
+ExecStart=/usr/bin/bash -c 'node bin/srt-publish.js 2>>/tmp/srt-gw-push.log | exec srt-live-transmit -q file://con "srt://54.69.119.129:20887?mode=caller&latency=200"'
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

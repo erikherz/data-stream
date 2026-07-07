@@ -53,6 +53,36 @@ Point any SRT sender at the listener (caller mode):
 … | srt-live-transmit file://con "srt://jake.moqcdn.net:9000?mode=caller&latency=200"
 ```
 
+## Receiver-measured sync snapshot
+
+`bin/srt-receive.js` decodes every KLV frame server-side (via `lib/data-tap.js`)
+and writes `<outDir>/receiver-sync.json` every 2s — the authoritative view of how
+the SRT source's data tracks its video, measured at the transport *before* HLS
+buffering (unlike the browser's `data↔video (render)` skew, which is only what
+survived into a given player). `web/receiver.html` polls it into a card. Fields:
+
+| field | meaning |
+| --- | --- |
+| `source` | `connected` (frames <3s old) / `stalled` / `waiting` |
+| `latencyMs` | `capture_timestamp_ms` → edge wall-clock (pipeline freshness) |
+| `fps`, `maxGapMs` | KLV cadence + worst inter-frame gap (data continuity) |
+| `queue` | injector backlog: frames awaiting the current video PTS weld |
+| `videoPtsSec` | output video PTS each frame is stamped to |
+| `game` | decoded period/clock/score/people/ball |
+
+**Honest scope:** transport alignment + freshness, *not* pixel-vs-data content
+sync (which needs OCR of the burned-in clock). A tight `queue`/`latency` with a
+mismatched on-screen clock just means the video clip and the data feed are
+independent content — the transport is doing its job.
+
+## Feeding the receiver: `systemd/origin-gateway-feed.service`
+
+The receiver pulls the gateway egress; something must publish to the gateway
+ingress. On the origin box, `origin-gateway-feed.service` runs `srt-publish.js`
+piped to a caller-mode `srt-live-transmit` aimed at `:20887`. It coexists with
+origin's own local `:9000` publisher. Without it the receiver stays up but its
+HLS goes stale.
+
 To pull (caller mode) instead of listen, override the unit's env:
 `Environment=SRT_URL=srt://host:port?mode=caller`.
 

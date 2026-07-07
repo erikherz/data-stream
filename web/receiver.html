@@ -21,7 +21,11 @@
   .hud div { display:flex; justify-content:space-between; gap:16px; padding:2px 0; }
   .hud .k { color:#8b98a5; }
   .status { font-weight:600; }
-  .ok { color:#3fb950; } .bad { color:#f85149; }
+  .ok { color:#3fb950; } .bad { color:#f85149; } .warn { color:#d29922; }
+  #srtcard .card-title { display:block; justify-content:flex-start; color:#e6edf3; font-weight:600;
+    margin:0 0 6px; padding-bottom:6px; border-bottom:1px solid var(--line); font-size:12px; }
+  #srtcard .card-foot { display:block; color:#6b7885; font-size:11px; margin-top:6px;
+    padding-top:6px; border-top:1px solid var(--line); }
   .legend span { display:inline-flex; align-items:center; gap:6px; margin-right:12px; }
   .dot { width:10px; height:10px; border-radius:50%; display:inline-block; }
   .manifest { padding:0 16px 20px; }
@@ -49,17 +53,33 @@
     </div>
   </div>
   <canvas id="court" width="600" height="319"></canvas>
-  <div class="hud">
-    <div><span class="k">HLS</span><span id="hls" class="status bad">loading…</span></div>
-    <div><span class="k">Data cues</span><span id="cues">0</span></div>
-    <div><span class="k">video time</span><span id="vtime">0.00s</span></div>
-    <div><span class="k">frame id</span><span id="fid">—</span></div>
-    <div><span class="k">people</span><span id="people">—</span></div>
-    <div><span class="k">period</span><span id="period">—</span></div>
-    <div><span class="k">game clock</span><span id="gclock">—</span></div>
-    <div><span class="k">shot clock</span><span id="sclock">—</span></div>
-    <div><span class="k">ball</span><span id="ball">—</span></div>
-    <div><span class="k">data↔video</span><span id="skew">—</span></div>
+  <div class="col">
+    <div class="hud">
+      <div><span class="k">HLS</span><span id="hls" class="status bad">loading…</span></div>
+      <div><span class="k">Data cues</span><span id="cues">0</span></div>
+      <div><span class="k">video time</span><span id="vtime">0.00s</span></div>
+      <div><span class="k">frame id</span><span id="fid">—</span></div>
+      <div><span class="k">people</span><span id="people">—</span></div>
+      <div><span class="k">period</span><span id="period">—</span></div>
+      <div><span class="k">game clock</span><span id="gclock">—</span></div>
+      <div><span class="k">shot clock</span><span id="sclock">—</span></div>
+      <div><span class="k">ball</span><span id="ball">—</span></div>
+      <div><span class="k">data↔video (render)</span><span id="skew">—</span></div>
+    </div>
+
+    <!-- Server-side sync, measured at the SRT receiver (not the browser). -->
+    <div class="hud" id="srtcard">
+      <div class="card-title">SRT source · receiver-measured sync</div>
+      <div><span class="k">source</span><span id="s-src" class="status bad">—</span></div>
+      <div><span class="k">latency (capture→edge)</span><span id="s-lat">—</span></div>
+      <div><span class="k">data rate</span><span id="s-fps">—</span></div>
+      <div><span class="k">worst gap</span><span id="s-gap">—</span></div>
+      <div><span class="k">mux backlog</span><span id="s-queue">—</span></div>
+      <div><span class="k">welded to video pts</span><span id="s-vpts">—</span></div>
+      <div><span class="k">score (home–away)</span><span id="s-score">—</span></div>
+      <div><span class="k">klv frames / err</span><span id="s-klv">—</span></div>
+      <div class="card-foot" id="s-age">—</div>
+    </div>
   </div>
 </div>
 
@@ -215,6 +235,47 @@ function draw() {
   requestAnimationFrame(draw);
 }
 requestAnimationFrame(draw);
+
+// --- SRT source sync card: poll the receiver-measured snapshot ---
+// This is the authoritative view of how the source's data tracks its video,
+// measured at the SRT receiver before HLS buffering (unlike data↔video (render),
+// which is what survived into this browser). Written by bin/srt-receive.js.
+const srtColor = (ms, warn, bad) => ms == null ? 'warn' : ms >= bad ? 'bad' : ms >= warn ? 'warn' : 'ok';
+async function refreshSrtSync() {
+  try {
+    const r = await fetch('/hls/receiver-sync.json?_=' + Date.now(), { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const s = await r.json();
+    const srcEl = $('s-src');
+    srcEl.textContent = s.source;
+    srcEl.className = 'status ' + (s.source === 'connected' ? 'ok' : s.source === 'stalled' ? 'bad' : 'warn');
+
+    const lat = $('s-lat');
+    lat.textContent = s.latencyMs == null ? '—' : (s.latencyMs/1000).toFixed(2) + 's';
+    lat.className = srtColor(s.latencyMs, 2500, 6000);
+
+    $('s-fps').textContent = s.fps != null ? s.fps.toFixed(1) + ' fps' : '—';
+    const gap = $('s-gap');
+    gap.textContent = s.maxGapMs != null ? s.maxGapMs + ' ms' : '—';
+    gap.className = srtColor(s.maxGapMs, 250, 1000);
+
+    const q = $('s-queue');
+    q.textContent = s.queue != null ? s.queue + ' frame' + (s.queue === 1 ? '' : 's') : '—';
+    q.className = srtColor(s.queue, 8, 30);
+
+    $('s-vpts').textContent = s.videoPtsSec != null ? s.videoPtsSec.toFixed(2) + 's' : '—';
+    const g = s.game || {};
+    $('s-score').textContent = (g.homeScore != null) ? `${g.homeScore} – ${g.awayScore}` : '—';
+    $('s-klv').textContent = `${s.klvFrames ?? '—'} / ${s.klvErrors ?? '—'}`;
+    $('s-age').textContent = `updated ${new Date(s.updatedAt).toLocaleTimeString()} · frame age ${s.lastFrameAgeMs ?? '—'} ms`;
+  } catch (e) {
+    $('s-src').textContent = 'no snapshot';
+    $('s-src').className = 'status bad';
+    $('s-age').textContent = 'fetch error: ' + e.message;
+  }
+}
+refreshSrtSync();
+setInterval(refreshSrtSync, 2000);
 
 // --- manifest panel: reveal + live-refresh the current playlist ---
 const mEl = $('manifest'), mBtn = $('toggle-manifest'), mMeta = $('manifest-meta');

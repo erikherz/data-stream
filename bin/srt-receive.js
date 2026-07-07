@@ -28,11 +28,14 @@
 // All logging goes to stderr.
 
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
 import { TsInjector } from '../lib/ts-inject.js';
 import { HlsSegmenter } from '../lib/hls-segmenter.js';
 import { KlvTsSource } from '../lib/klv-ts-source.js';
 import { buildId3 } from '../lib/id3.js';
 import { ID3_REGISTRATION_DESCRIPTOR } from '../lib/ts.js';
+import { loadMessageType, toNum } from '../lib/data-tap.js';
 
 const outDir = process.argv[2] ?? '/var/www/html/hls';
 const name = process.argv[3] ?? 'receiver';
@@ -73,8 +76,87 @@ const ffmpeg = spawn('ffmpeg', [
 ffmpeg.stdout.pipe(injector);
 
 // --- data path: pull KLV frames off the same source TS, re-inject as ID3 ---
+// Alongside re-injection we decode each frame server-side to publish a live
+// sync snapshot (receiver-sync.json): the authoritative, receiver-measured view
+// of how the SRT source's data tracks its video — freshness, cadence, and the
+// data↔video muxing backlog, measured here rather than in a browser after HLS
+// buffering. Fields we can honestly measure at the transport:
+//   latencyMs  source capture_timestamp_ms -> edge wall-clock (pipeline freshness)
+//   fps/gap    KLV frame cadence + worst inter-frame gap (data continuity)
+//   queue      injector backlog: frames waiting to be welded to the video PTS
+//   videoPts   the output video PTS each frame is currently stamped to
+//   game       decoded period/clock/score/people (proves content is readable)
 const klv = new KlvTsSource();
-klv.on('frame', (raw) => injector.pushFrame(raw));
+
+let Message = null;
+loadMessageType().then((M) => { Message = M; }).catch((e) => log(`proto load: ${e.message}`));
+
+const SNAP_PATH = path.join(outDir, 'receiver-sync.json');
+const arrivals = [];        // recent frame wall-clock arrival times (rolling)
+let lastFrameAt = 0;        // wall-clock of the most recent KLV frame
+let latencyMs = null;       // source capture -> edge receive (ms)
+let game = null;            // last decoded game state
+
+klv.on('frame', (raw) => {
+  injector.pushFrame(raw);
+  const now = Date.now();
+  lastFrameAt = now;
+  arrivals.push(now);
+  if (arrivals.length > 240) arrivals.shift();
+  if (!Message) return;
+  try {
+    const msg = Message.decode(raw);
+    const f = msg.frame;
+    if (!f) return;
+    const capTs = toNum(f.captureTimestampMs);
+    if (capTs > 0) latencyMs = now - capTs;
+    const c = f.clock || {};
+    game = {
+      frameId: toNum(f.frameId),
+      period: c.period ?? null,
+      gameClock: c.gameClockSeconds != null ? Number(c.gameClockSeconds.toFixed(1)) : null,
+      shotClock: c.shotClockSeconds != null ? Number(c.shotClockSeconds.toFixed(1)) : null,
+      running: !!c.running,
+      homeScore: f.homeScore ?? 0,
+      awayScore: f.awayScore ?? 0,
+      people: (f.people || []).length,
+      ball: f.ball ? (f.ball.inPossession ? 'held' : 'loose') : null,
+    };
+  } catch { /* partial PES at stream join — ignore */ }
+});
+
+// Rolling cadence: frames-per-second and worst gap over the recent window.
+function cadence() {
+  const now = Date.now();
+  const recent = arrivals.filter((t) => now - t <= 2000);
+  const fps = recent.length / 2;
+  let maxGapMs = 0;
+  for (let i = 1; i < arrivals.length; i++) maxGapMs = Math.max(maxGapMs, arrivals[i] - arrivals[i - 1]);
+  return { fps: Number(fps.toFixed(1)), maxGapMs };
+}
+
+function writeSnapshot() {
+  const now = Date.now();
+  const ageMs = lastFrameAt ? now - lastFrameAt : null;
+  const { fps, maxGapMs } = cadence();
+  const snap = {
+    updatedAt: now,
+    // "connected" once frames are flowing; "stalled" if none for >3s.
+    source: (lastFrameAt && ageMs <= 3000) ? 'connected' : (lastFrameAt ? 'stalled' : 'waiting'),
+    klvFrames: klv.frames,
+    klvErrors: klv.errors,
+    injected: injector.injected,
+    segments: segmenter.seq,
+    queue: injector.pending.length,
+    videoPtsSec: injector.lastVideoPts != null ? Number((injector.lastVideoPts / 90000).toFixed(2)) : null,
+    lastFrameAgeMs: ageMs,
+    latencyMs,
+    fps,
+    maxGapMs,
+    game,
+  };
+  try { fs.writeFileSync(SNAP_PATH, JSON.stringify(snap)); } catch (e) { log(`snapshot: ${e.message}`); }
+}
 
 // Tee the source TS to both consumers. Guard writes: if ffmpeg dies we still
 // want the process to exit cleanly rather than throw EPIPE.
@@ -85,9 +167,10 @@ log(`listening ${SRT_URL}`);
 log(`writing HLS to ${outDir}/${name}.m3u8 (metadata PID 0x${META_PID.toString(16)})`);
 
 const statsTimer = setInterval(() => {
+  writeSnapshot();
   log(`segments=${segmenter.seq} window=${segmenter.window.length} ` +
       `klv=${klv.frames} klvErr=${klv.errors} injected=${injector.injected} ` +
-      `queue=${injector.pending.length}`);
+      `queue=${injector.pending.length} lat=${latencyMs ?? '—'}ms`);
 }, 2000);
 
 function shutdown() {
