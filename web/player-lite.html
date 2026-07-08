@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Hawkeye over HLS — lite (score + clock sync)</title>
+<title>Hawkeye over HLS — lite (spatial data as text)</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Big+Shoulders:opsz,wght@10..72,700..900&family=Jersey+15&display=swap" rel="stylesheet">
@@ -16,32 +16,53 @@
   header .note { color:#8b98a5; font-size:12px; }
   .badge { display:inline-block; margin-left:8px; padding:2px 8px; border-radius:10px; font-size:11px;
     background:#16331f; color:#3fb950; border:1px solid #2c6b3f; vertical-align:middle; }
-  /* live scoreboard (in-band score + game clock, decoded from the feed) */
   .scorebar { display:flex; align-items:center; justify-content:center; gap:24px; flex-wrap:wrap;
-    padding:16px; border-bottom:1px solid var(--line); background:linear-gradient(180deg,#0e141b,#0a0e13); }
+    padding:14px 16px; border-bottom:1px solid var(--line); background:linear-gradient(180deg,#0e141b,#0a0e13); }
   .scorebar .team { display:flex; align-items:center; gap:14px; }
-  .scorebar .tname { font-family:'Big Shoulders','Arial Narrow',sans-serif; font-weight:800; font-size:20px;
+  .scorebar .tname { font-family:'Big Shoulders','Arial Narrow',sans-serif; font-weight:800; font-size:18px;
     letter-spacing:.6px; text-transform:uppercase; color:#8b98a5; }
   .scorebar .team.home .tname { color:var(--home); }
   .scorebar .team.away .tname { color:var(--away); }
-  .scorebar .tscore { font-family:'Jersey 15',monospace; font-size:64px; line-height:.9; min-width:70px; text-align:center; color:#f4f8fb; }
-  .scorebar .mid { display:flex; flex-direction:column; align-items:center; gap:2px; padding:0 10px; min-width:120px; }
-  .scorebar .period { font-family:'Big Shoulders',sans-serif; font-weight:800; letter-spacing:1.5px; font-size:16px; color:#e6edf3; }
-  .scorebar .gclock { font-family:'Jersey 15',monospace; font-size:48px; line-height:1; color:#f4f8fb; }
+  .scorebar .tscore { font-family:'Jersey 15',monospace; font-size:56px; line-height:.9; min-width:64px; text-align:center; color:#f4f8fb; }
+  .scorebar .mid { display:flex; flex-direction:column; align-items:center; gap:2px; padding:0 10px; min-width:112px; }
+  .scorebar .period { font-family:'Big Shoulders',sans-serif; font-weight:800; letter-spacing:1.5px; font-size:15px; color:#e6edf3; }
+  .scorebar .gclock { font-family:'Jersey 15',monospace; font-size:44px; line-height:1; color:#f4f8fb; }
   .scorebar .shot { font-size:12px; font-weight:700; color:var(--ball); letter-spacing:.5px; }
-  .scorebar .sep { color:#2a3645; font-size:36px; }
+  .scorebar .sep { color:#2a3645; font-size:32px; }
   .wrap { display:flex; gap:16px; padding:16px; flex-wrap:wrap; align-items:flex-start; }
-  video { width:420px; max-width:100%; background:#000; border:1px solid var(--line); border-radius:8px; }
-  .hud { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 12px; min-width:220px; }
+  video { width:360px; max-width:100%; background:#000; border:1px solid var(--line); border-radius:8px; }
+  .hud { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 12px; min-width:200px; }
   .hud div { display:flex; justify-content:space-between; gap:16px; padding:2px 0; }
   .hud .k { color:#8b98a5; }
   .status { font-weight:600; } .ok { color:#3fb950; } .bad { color:#f85149; } .warn { color:#d29922; }
+
+  /* spatial section */
+  .spatial { display:flex; gap:18px; padding:0 16px 22px; flex-wrap:wrap; align-items:flex-start; }
+  .reads { color:#cfe3f5; margin-bottom:8px; font-size:12px; }
+  .reads b.b { color:var(--ball); } .reads b.h { color:var(--home); } .reads b.a { color:var(--away); }
+  pre.court { margin:0; line-height:1.08; font-size:12px; letter-spacing:.5px; color:#41505f;
+    background:#0e151d; border:1px solid var(--line); border-radius:8px; padding:12px 14px; overflow-x:auto; }
+  pre.court .home { color:var(--home); font-weight:700; }
+  pre.court .away { color:var(--away); font-weight:700; }
+  pre.court .bc { color:var(--ball); font-weight:700; }
+  pre.court .ln { color:#22303e; }
+  table.roster { border-collapse:collapse; font-size:12px; min-width:290px; }
+  table.roster caption { text-align:left; font-family:'Big Shoulders',sans-serif; font-weight:800;
+    letter-spacing:1px; font-size:15px; padding:0 0 6px; }
+  table.roster.home caption { color:var(--home); } table.roster.away caption { color:var(--away); }
+  table.roster th, table.roster td { padding:3px 9px; text-align:right; border-bottom:1px solid var(--line); white-space:nowrap; }
+  table.roster th { color:#8b98a5; font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:.5px; }
+  table.roster td.j { font-family:'Jersey 15',monospace; font-size:20px; text-align:center; }
+  table.roster.home td.j { color:var(--home); } table.roster.away td.j { color:var(--away); }
+  table.roster tr.hasball td { background:rgba(255,140,26,.10); }
+  td.bcell { color:var(--ball); text-align:center; }
+  .mut { color:#8b98a5; }
 </style>
 </head>
 <body>
 <header>
-  <h1>🏀 Hawkeye over HLS — lite <span class="badge">score + clock · sync check</span></h1>
-  <span class="note">No visualization — just the in-band score and game clock (ID3→protobuf), gated to the video clock. A light page to confirm data↔video sync.</span>
+  <h1>🏀 Hawkeye over HLS — lite <span class="badge">spatial data · as text</span></h1>
+  <span class="note">In-band tracking (ID3→protobuf), gated to the video clock. Score + clock, per-player court position / speed / ball, and a text court plot — no canvas. Jersey numbers only (the feed carries no player names).</span>
 </header>
 
 <div id="scoreboard" class="scorebar">
@@ -63,10 +84,19 @@
     <div><span class="k">data cues</span><span id="cues">0</span></div>
     <div><span class="k">video time</span><span id="vtime">0.00s</span></div>
     <div><span class="k">frame id</span><span id="fid">—</span></div>
-    <div><span class="k">people</span><span id="people">—</span></div>
+    <div><span class="k">on court</span><span id="people">—</span></div>
     <div><span class="k">data↔video</span><span id="skew">—</span></div>
   </div>
 </div>
+
+<section class="spatial">
+  <div>
+    <div class="reads" id="reads">—</div>
+    <pre class="court" id="court"></pre>
+  </div>
+  <table class="roster home" id="tbl-home"><caption>Home</caption></table>
+  <table class="roster away" id="tbl-away"><caption>Away</caption></table>
+</section>
 
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
 <script src="https://cdn.jsdelivr.net/npm/protobufjs@7.4.0/dist/protobuf.min.js"></script>
@@ -77,6 +107,27 @@ const PERIOD_LABEL = ['—','1ST','2ND','3RD','4TH'];
 const fmtPeriod = (p) => !p ? '—' : (p <= 4 ? PERIOD_LABEL[p] : 'OT' + (p - 4));
 const fmtClock = (s) => s == null ? '--:--'
   : (s >= 60 ? Math.floor(s/60) + ':' + String(Math.floor(s%60)).padStart(2,'0') : s.toFixed(1));
+
+// Court geometry (meters). x = length [0,28.65], y = width [0,15.24]. Hoops sit
+// ~1.6m in from each baseline, centered on the width.
+const COURT = { x: 28.65, y: 15.24 };
+const HOOP = [{x:1.6, y:7.62}, {x:27.05, y:7.62}];
+const dist = (ax,ay,bx,by) => Math.hypot(ax-bx, ay-by);
+
+// Human-readable court zone from an (x,y) position.
+function zoneOf(x, y) {
+  const side = x < COURT.x/2 ? 'L' : 'R';
+  const d = Math.min(dist(x,y,HOOP[0].x,HOOP[0].y), dist(x,y,HOOP[1].x,HOOP[1].y));
+  const lane = Math.abs(y - COURT.y/2) < 2.45;   // 16ft lane, half-width ~2.44m
+  let ring;
+  if (d < 1.9) ring = 'rim';
+  else if (d < 4.0 && lane) ring = 'paint';
+  else if (d < 6.75) ring = 'mid';               // inside the arc
+  else if (Math.abs(x - COURT.x/2) < 2.5) ring = 'logo';
+  else ring = 'arc';
+  const band = y < COURT.y/3 ? '↓' : y > 2*COURT.y/3 ? '↑' : '·';
+  return `${side}·${ring}${band}`;
+}
 
 // --- ID3v2.4 PRIV unwrap (mirror of lib/id3.js) ---
 const unsync = (b, o) => ((b[o]&0x7f)<<21)|((b[o+1]&0x7f)<<14)|((b[o+2]&0x7f)<<7)|(b[o+3]&0x7f);
@@ -165,27 +216,126 @@ if (Hls.isSupported()) {
   });
 }
 
-// pick the frame whose pts is at/just-before the current video time
 function pickFrame(t) {
   let lo = 0, hi = frames.length - 1, best = null;
   while (lo <= hi) { const m = (lo+hi)>>1; if (frames[m].pts <= t) { best = frames[m]; lo = m+1; } else hi = m-1; }
   return best;
 }
 
-// No canvas, no rAF: just refresh the text a few times a second — cheap on any client.
+// Per-player speed, tracked across frames on the content (pts) timeline.
+const track = new Map(); // id -> { t, x, y, spd }
+function speedOf(p, pel, tNow) {
+  const prev = track.get(p.id);
+  let spd = prev ? prev.spd : 0;
+  if (prev && tNow > prev.t) {
+    const inst = dist(pel.x, pel.y, prev.x, prev.y) / (tNow - prev.t);
+    spd = Math.min(12, prev.spd * 0.5 + inst * 0.5);   // light smoothing, cap ~ human max
+  }
+  track.set(p.id, { t: tNow, x: pel.x, y: pel.y, spd });
+  return spd;
+}
+
+const pelvisOf = (p) => p.joints?.[16]?.pos || p.joints?.[2]?.pos || null;
+
+// Text court plot: 30×14 grid of 2-char cells, jersey numbers colored by team.
+function buildCourt(players, ball, carrierId) {
+  const COLS = 30, ROWS = 14;
+  const grid = Array.from({length: ROWS}, () => Array(COLS).fill(null));
+  const place = (x, y, txt, cls) => {
+    const c = Math.max(0, Math.min(COLS-1, Math.round(x / COURT.x * (COLS-1))));
+    const r = Math.max(0, Math.min(ROWS-1, Math.round(y / COURT.y * (ROWS-1))));
+    grid[r][c] = { txt, cls };
+  };
+  for (const p of players) {
+    const pel = pelvisOf(p); if (!pel) continue;
+    const j = String(p.jersey ?? '').slice(-2).padStart(2, ' ');
+    place(pel.x, pel.y, j, p.id === carrierId ? 'bc' : (p.team === 1 ? 'home' : 'away'));
+  }
+  if (ball?.pos) place(ball.pos.x, ball.pos.y, '● ', 'bc');
+  let html = '';
+  for (let r = 0; r < ROWS; r++) {
+    const midR = (r === 0 || r === ROWS-1);
+    for (let c = 0; c < COLS; c++) {
+      const cell = grid[r][c];
+      if (cell) html += `<span class="${cell.cls}">${cell.txt}</span>`;
+      else if (c === Math.round((COLS-1)/2)) html += '<span class="ln">| </span>';
+      else html += midR ? '<span class="ln">--</span>' : '· ';
+    }
+    html += '\n';
+  }
+  return html;
+}
+
+function teamRows(players, ball, carrierId) {
+  const bx = ball?.pos?.x, by = ball?.pos?.y;
+  return players.map(p => {
+    const pel = pelvisOf(p); if (!pel) return '';
+    const spd = (p._spd ?? 0).toFixed(1);
+    const dBall = (bx != null) ? dist(pel.x, pel.y, bx, by).toFixed(1) + 'm' : '—';
+    const has = p.id === carrierId;
+    return `<tr class="${has ? 'hasball' : ''}">`
+      + `<td class="j">${p.jersey ?? '—'}</td>`
+      + `<td>${zoneOf(pel.x, pel.y)}</td>`
+      + `<td class="mut">${pel.x.toFixed(1)},${pel.y.toFixed(1)}</td>`
+      + `<td>${spd}</td>`
+      + `<td>${dBall}</td>`
+      + `<td class="bcell">${has ? '🏀' : ''}</td>`
+      + `</tr>`;
+  }).join('');
+}
+
+const HEAD = '<tr><th>#</th><th>zone</th><th>x,y m</th><th>m/s</th><th>Δball</th><th></th></tr>';
+
+// No rAF: refresh a few times a second — cheap on any client.
 setInterval(() => {
-  $('vtime').textContent = video.currentTime.toFixed(2)+'s';
+  $('vtime').textContent = video.currentTime.toFixed(2) + 's';
   const item = pickFrame(video.currentTime);
   if (!item) return;
-  const f = item.frame, c = f.clock || {};
+  const f = item.frame, c = f.clock || {}, ball = f.ball;
+  const people = f.people || [];
+
+  // scoreboard + basic hud
   $('fid').textContent = toNum(f.frameId);
-  $('people').textContent = (f.people||[]).length;
-  $('skew').textContent = (video.currentTime - item.pts).toFixed(2)+'s';
+  $('people').textContent = people.length;
+  $('skew').textContent = (video.currentTime - item.pts).toFixed(2) + 's';
   $('sb-home').textContent = f.homeScore ?? 0;
   $('sb-away').textContent = f.awayScore ?? 0;
   $('sb-period').textContent = fmtPeriod(c.period);
   $('sb-gclock').textContent = c.gameClockSeconds != null ? fmtClock(c.gameClockSeconds) : '--:--';
   $('sb-shot').textContent = c.shotClockSeconds != null ? Math.ceil(c.shotClockSeconds) : '—';
+
+  // players → speed + team split
+  const home = [], away = [];
+  for (const p of people) {
+    const pel = pelvisOf(p); if (!pel) continue;
+    p._spd = speedOf(p, pel, item.pts);
+    if (p.team === 1) home.push(p); else if (p.team === 2) away.push(p);
+  }
+
+  // derive ball carrier = nearest player to the ball (feed omits possession)
+  let carrierId = null, carrier = null, best = 1.8;   // within ~1.8m = "has it"
+  if (ball?.pos) for (const p of people) {
+    const pel = pelvisOf(p); if (!pel) continue;
+    const d = dist(pel.x, pel.y, ball.pos.x, ball.pos.y);
+    if (d < best) { best = d; carrierId = p.id; carrier = p; }
+  }
+  // fastest player on the floor
+  let fast = null; for (const p of people) if (!fast || (p._spd||0) > (fast._spd||0)) fast = p;
+
+  // quick reads line
+  const bz = ball?.pos ? zoneOf(ball.pos.x, ball.pos.y) : '—';
+  const bh = ball?.pos ? ball.pos.z.toFixed(1) + 'm' : '—';
+  const bhLabel = ball?.pos ? (ball.pos.z > 2.4 ? ' (shot/pass)' : ball.pos.z < 0.6 ? ' (floor)' : '') : '';
+  const carTeam = carrier ? (carrier.team === 1 ? 'h' : 'a') : '';
+  $('reads').innerHTML =
+    `🏀 <b class="b">ball</b> ${bz} · height <b class="b">${bh}</b>${bhLabel} · `
+    + `carrier ${carrier ? `<b class="${carTeam}">#${carrier.jersey}</b> (${best.toFixed(1)}m)` : '<span class="mut">loose</span>'} · `
+    + `fastest ${fast ? `<b class="${fast.team===1?'h':'a'}">#${fast.jersey}</b> ${(fast._spd||0).toFixed(1)} m/s` : '—'}`;
+
+  // court plot + tables
+  $('court').innerHTML = buildCourt(people, ball, carrierId);
+  $('tbl-home').innerHTML = '<caption>Home</caption>' + HEAD + teamRows(home, ball, carrierId);
+  $('tbl-away').innerHTML = '<caption>Away</caption>' + HEAD + teamRows(away, ball, carrierId);
 }, 200);
 </script>
 </body>
