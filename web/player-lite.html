@@ -38,19 +38,26 @@
 
   /* spatial section */
   .spatial { display:flex; gap:18px; padding:0 16px 22px; flex-wrap:wrap; align-items:flex-start; }
-  .reads { color:#cfe3f5; margin-bottom:8px; font-size:12px; }
+  /* full-width, single line, fixed-width value slots — so changing values never
+     reflow the court or the tables below (no layout flapping). */
+  .reads { color:#cfe3f5; padding:6px 16px 12px; font-size:12px; min-height:1.5em;
+    white-space:nowrap; overflow-x:auto; }
   .reads b.b { color:var(--ball); } .reads b.h { color:var(--home); } .reads b.a { color:var(--away); }
+  .reads .v { display:inline-block; text-align:left; }
+  .reads .vz { min-width:60px; } .reads .vh { min-width:122px; }
+  .reads .vc { min-width:106px; } .reads .vf { min-width:106px; }
   pre.court { margin:0; line-height:1.08; font-size:12px; letter-spacing:.5px; color:#41505f;
     background:#0e151d; border:1px solid var(--line); border-radius:8px; padding:12px 14px; overflow-x:auto; }
   pre.court .home { color:var(--home); font-weight:700; }
   pre.court .away { color:var(--away); font-weight:700; }
   pre.court .bc { color:var(--ball); font-weight:700; }
   pre.court .ln { color:#22303e; }
-  table.roster { border-collapse:collapse; font-size:12px; min-width:290px; }
+  table.roster { border-collapse:collapse; font-size:12px; table-layout:fixed; width:344px; }
   table.roster caption { text-align:left; font-family:'Big Shoulders',sans-serif; font-weight:800;
     letter-spacing:1px; font-size:15px; padding:0 0 6px; }
   table.roster.home caption { color:var(--home); } table.roster.away caption { color:var(--away); }
-  table.roster th, table.roster td { padding:3px 9px; text-align:right; border-bottom:1px solid var(--line); white-space:nowrap; }
+  table.roster th, table.roster td { padding:3px 9px; text-align:right; border-bottom:1px solid var(--line);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   table.roster th { color:#8b98a5; font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:.5px; }
   table.roster td.j { font-family:'Jersey 15',monospace; font-size:20px; text-align:center; }
   table.roster.home td.j { color:var(--home); } table.roster.away td.j { color:var(--away); }
@@ -89,11 +96,9 @@
   </div>
 </div>
 
+<div class="reads" id="reads">—</div>
 <section class="spatial">
-  <div>
-    <div class="reads" id="reads">—</div>
-    <pre class="court" id="court"></pre>
-  </div>
+  <pre class="court" id="court"></pre>
   <table class="roster home" id="tbl-home"><caption>Home</caption></table>
   <table class="roster away" id="tbl-away"><caption>Away</caption></table>
 </section>
@@ -284,6 +289,11 @@ function teamRows(players, ball, carrierId) {
   }).join('');
 }
 
+// Fixed column widths (with table-layout:fixed) so columns never recompute as
+// values change width — the source of the layout flapping.
+const COLG = '<colgroup>'
+  + '<col style="width:42px"><col style="width:82px"><col style="width:88px">'
+  + '<col style="width:44px"><col style="width:56px"><col style="width:32px"></colgroup>';
 const HEAD = '<tr><th>#</th><th>zone</th><th>x,y m</th><th>m/s</th><th>Δball</th><th></th></tr>';
 
 // No rAF: refresh a few times a second — cheap on any client.
@@ -328,14 +338,14 @@ setInterval(() => {
   const bhLabel = ball?.pos ? (ball.pos.z > 2.4 ? ' (shot/pass)' : ball.pos.z < 0.6 ? ' (floor)' : '') : '';
   const carTeam = carrier ? (carrier.team === 1 ? 'h' : 'a') : '';
   $('reads').innerHTML =
-    `🏀 <b class="b">ball</b> ${bz} · height <b class="b">${bh}</b>${bhLabel} · `
-    + `carrier ${carrier ? `<b class="${carTeam}">#${carrier.jersey}</b> (${best.toFixed(1)}m)` : '<span class="mut">loose</span>'} · `
-    + `fastest ${fast ? `<b class="${fast.team===1?'h':'a'}">#${fast.jersey}</b> ${(fast._spd||0).toFixed(1)} m/s` : '—'}`;
+    `🏀 <b class="b">ball</b> <span class="v vz">${bz}</span> · height <span class="v vh"><b class="b">${bh}</b>${bhLabel}</span> · `
+    + `carrier <span class="v vc">${carrier ? `<b class="${carTeam}">#${carrier.jersey}</b> (${best.toFixed(1)}m)` : '<span class="mut">loose</span>'}</span> · `
+    + `fastest <span class="v vf">${fast ? `<b class="${fast.team===1?'h':'a'}">#${fast.jersey}</b> ${(fast._spd||0).toFixed(1)} m/s` : '—'}</span>`;
 
   // court plot + tables
   $('court').innerHTML = buildCourt(people, ball, carrierId);
-  $('tbl-home').innerHTML = '<caption>Home</caption>' + HEAD + teamRows(home, ball, carrierId);
-  $('tbl-away').innerHTML = '<caption>Away</caption>' + HEAD + teamRows(away, ball, carrierId);
+  $('tbl-home').innerHTML = '<caption>Home</caption>' + COLG + HEAD + teamRows(home, ball, carrierId);
+  $('tbl-away').innerHTML = '<caption>Away</caption>' + COLG + HEAD + teamRows(away, ball, carrierId);
 }, 200);
 </script>
 </body>
