@@ -35,25 +35,22 @@ const injector = new TsInjector({
 const segmenter = new HlsSegmenter({ dir: outDir, name, windowSize: HLS_WINDOW });
 injector.on('data', (d) => segmenter.feed(d));
 
-// Sync-from-tipoff: the video file is trimmed to start at tip-off and the pose
-// feed connects from=tipoff, so both begin at tip. Track each stream's elapsed-
-// from-tip from a MONOTONIC signal that doesn't stop for dead balls — the video
-// PTS (file position) and the pose capture wall-clock — and publish the delta so
-// the player can show it (and later apply it as a render offset). Anchored to the
-// first sample of each, captured at process start = this tip-off.
-let tipCaptureTs = null;  // first pose capture ts seen (≈ tip)
+// Sync-from-tipoff: the video file is trimmed to the VISUAL tip-off, but the pose
+// feed's from=tipoff marker begins DATA_OFFSET_S seconds earlier (its tip-off lead-
+// in), so a naive wall-clock weld leaves the data trailing the video by that gap.
+// Fix: pull the feed, DISCARD the pre-tip lead-in, and start ffmpeg only once the
+// data has advanced past the offset — so the video's first frame (the visual tip)
+// welds to the data's tip. All this timing lives here in the injector path; ffmpeg
+// owns none of it, so no gstreamer needed. DATA_OFFSET_S is the tuning dial.
+const DATA_OFFSET_S = Number(process.env.DATA_OFFSET_S ?? 11);
+let tipCaptureTs = null;   // first pose capture ts (feed start ≈ visual tip − DATA_OFFSET_S)
+let dataAnchorTs = null;   // capture ts of the frame injection begins on (≈ visual tip)
 let lastCaptureTs = null;
 
 const tap = createFrameSource();
 tap.on('open', () => log(`feed connected: ${tap.url}`));
 tap.on('error', (err) => log(`feed error: ${err.message}`));
 
-// Start the video encoder ONLY once the first pose frame is in hand, so video
-// content-0 (tip-off) welds to data content-0 (tip-off). The injector welds each
-// pose to the CURRENT video PTS as it drains; if ffmpeg ran ahead during the
-// feed's connect+roster+first-frame latency, that first pose would weld to an
-// already-advanced PTS and the data would trail the video by that gap (the ~11s
-// startup skew). Gating the encoder on the first frame makes both begin together.
 let ffmpeg = null;
 function startFfmpeg() {
   // VIDEO_LOOP=0 plays the source once (from tip-off) and stops; the default loops.
@@ -74,12 +71,21 @@ function startFfmpeg() {
 }
 
 tap.on('frame', (f) => {
-  injector.pushFrame(f.raw);
   if (f.captureTs) {
     if (tipCaptureTs == null) tipCaptureTs = f.captureTs;
     lastCaptureTs = f.captureTs;
   }
-  if (!ffmpeg) { log('first pose frame in hand — starting tip-aligned video'); startFfmpeg(); }
+  // Hold off (and discard the pre-tip lead-in) until the feed has played through
+  // the offset window. The frame that crosses it ≈ the video's visual tip, so
+  // starting ffmpeg here welds video-tip to data-tip.
+  if (!ffmpeg) {
+    const buffered = (tipCaptureTs != null && f.captureTs) ? (f.captureTs - tipCaptureTs) / 1000 : 0;
+    if (buffered < DATA_OFFSET_S) return; // still in the lead-in — drop it
+    dataAnchorTs = f.captureTs;
+    log(`data buffered ${buffered.toFixed(1)}s ≥ ${DATA_OFFSET_S}s offset — starting tip-aligned video`);
+    startFfmpeg();
+  }
+  injector.pushFrame(f.raw);
 });
 await tap.start();
 
@@ -88,8 +94,8 @@ function writeSync() {
   const vpts = injector.lastVideoPts;
   const tipVideoPts = injector.firstVideoPts; // exact tip anchor (ffmpeg's first PTS)
   const videoFromTip = tipVideoPts != null ? (vpts - tipVideoPts) / 90000 : null;
-  const dataFromTip = (tipCaptureTs != null && lastCaptureTs != null)
-    ? (lastCaptureTs - tipCaptureTs) / 1000 : null;
+  const dataFromTip = (dataAnchorTs != null && lastCaptureTs != null)
+    ? (lastCaptureTs - dataAnchorTs) / 1000 : null;
   const delta = (videoFromTip != null && dataFromTip != null)
     ? Number((videoFromTip - dataFromTip).toFixed(2)) : null;   // + = video ahead
   const snap = {
