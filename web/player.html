@@ -92,6 +92,7 @@
   @keyframes sbspin { to { transform:rotate(360deg); } }
   #standby .sb-title { font-size:22px; font-weight:700; letter-spacing:0.5px; }
   #standby .sb-sub { margin-top:8px; color:#8b98a5; font-size:13px; }
+  #standby.ended .sb-spin { display:none; }   /* source finished: not loading, awaiting Restart */
 </style>
 <div id="standby" hidden>
   <div class="sb-inner">
@@ -247,75 +248,124 @@ function onSamples(samples) {
 const video = $('video');
 const SRC = '/hls/hawkeye.m3u8';
 
-// Standby overlay: on a tip-off restart the publisher discards the pre-tip lead-in
-// (~11s) before any video exists, so instead of a dead spinner we hide the stage
-// and show "Please stand by…". We reload once the fresh playlist is up, then hold
-// standby across the reload until the video actually starts playing — so it snaps
-// in right at the tip rather than flashing a black player.
+// --- standby state machine (shared behavior with /lite) ---
+// Drives the "Please stand by…" panel off the SHARED stream state (the playlist),
+// NOT a per-tab flag — so loading or reloading EITHER page after a restart from
+// EITHER page behaves correctly:
+//   • restart is buffering the ~11s pre-tip lead-in → stand by, poll, start at tip
+//   • play-once source finished (~9 min) → stand by "click Restart to replay"
 const stageEl = $('stage'), standbyEl = $('standby'), standbySub = $('standby-sub');
 function revealStage() { standbyEl.hidden = true; stageEl.hidden = false; }
 function enterStandby(sub) { if (sub) standbySub.textContent = sub; stageEl.hidden = true; standbyEl.hidden = false; }
-if (sessionStorage.getItem('vpp-resuming')) {
-  sessionStorage.removeItem('vpp-resuming');
-  enterStandby('Tip-off ready — starting…');
-  setTimeout(revealStage, 20000); // failsafe so a bad load can't hide the stage forever
+
+let hlsInst = null, expired = false, lastSig = '', lastGrow = Date.now();
+video.addEventListener('playing', () => { if (!expired) revealStage(); });
+
+// One playlist probe: is it playable, and is it a FRESH (just-restarted) stream?
+async function playlistInfo() {
+  try {
+    const r = await fetch(SRC + '?_=' + Date.now(), { cache: 'no-store' });
+    if (!r.ok) return { ok: false };
+    const txt = await r.text();
+    const segs = txt.split('\n').filter((l) => l.trim() && !l.startsWith('#')).length;
+    const m = txt.match(/#EXT-X-MEDIA-SEQUENCE:(\d+)/);
+    return { ok: true, segs, seq: m ? Number(m[1]) : 0, endlist: txt.includes('#EXT-X-ENDLIST') };
+  } catch (e) { return { ok: false }; }
 }
-video.addEventListener('playing', revealStage, { once: true });
-if (Hls.isSupported()) {
-  // This is a file-based demo — latency doesn't matter, reliability does. So no
-  // low-latency mode (it hugs the live edge and stalls/seeks on any jitter);
-  // instead sit ~8s back and keep a deep fwd/back buffer to ride through hiccups.
-  // Bounds stay under the publisher's DVR window (HLS_WINDOW≈10 segs ≈ 20s).
-  const hls = new Hls({
-    enableWorker: true,
-    lowLatencyMode: false,
-    liveSyncDuration: 8,           // play ~8s (≈4 segments) behind the live edge
-    liveMaxLatencyDuration: 18,    // only force a resync if we fall >18s behind
-    maxBufferLength: 20,           // fill up to ~20s ahead
-    maxMaxBufferLength: 40,
-    backBufferLength: 20,          // retain ~20s behind for stability
-    maxBufferHole: 0.5,            // tolerate small gaps without stalling
-    nudgeMaxRetry: 20,             // be patient nudging through a stall
-    fragLoadingMaxRetry: 8,
-    manifestLoadingMaxRetry: 6,
-    levelLoadingMaxRetry: 6,
-  });
-  hls.on(Hls.Events.MANIFEST_PARSED, () => { $('hls').textContent='playing'; $('hls').className='status ok'; video.play().catch(()=>{}); });
-  // Auto-recover from fatal errors instead of just dying: resume the loader on a
-  // network stall, rebuild the decode pipeline on a media error, and only surface
-  // a hard failure if recovery is exhausted.
-  let mediaRecover = 0;
-  hls.on(Hls.Events.ERROR, (e, d) => {
-    if (!d.fatal) return;
-    $('hls').textContent = 'recovering… (' + d.details + ')'; $('hls').className = 'status warn';
-    if (d.type === Hls.ErrorTypes.NETWORK_ERROR) {
-      hls.startLoad();
-    } else if (d.type === Hls.ErrorTypes.MEDIA_ERROR) {
-      if (mediaRecover++ < 3) hls.recoverMediaError();
-      else { $('hls').textContent = 'error: ' + d.details; $('hls').className = 'status bad'; }
-    } else {
-      $('hls').textContent = 'error: ' + d.details; $('hls').className = 'status bad';
-    }
-  });
-  hls.on(Hls.Events.FRAG_PARSING_METADATA, (e, d) => onSamples(d.samples || []));
-  hls.loadSource(SRC);
-  hls.attachMedia(video);
-} else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-  // Safari: native HLS surfaces ID3 via a metadata text track.
-  video.src = SRC;
-  $('hls').textContent='playing (native)'; $('hls').className='status ok';
-  video.addEventListener('loadedmetadata', () => {
-    for (const tt of video.textTracks) if (tt.kind === 'metadata') {
-      tt.mode = 'hidden';
-      tt.addEventListener('cuechange', () => {
-        for (const c of tt.activeCues || []) {
-          const d = c.value && (c.value.data || c.value.info);
-          if (d) onSamples([{ pts: c.startTime, data: d instanceof Uint8Array ? d : new Uint8Array(d) }]);
-        }
-      });
-    }
-  });
+
+// Build + attach hls (or the Safari native path). atTip=true starts at the DVR head
+// (the tip) for a freshly restarted stream; else ~8s behind the live edge.
+function startPlayback(atTip) {
+  if (Hls.isSupported()) {
+    // File-based demo — latency doesn't matter, reliability does. No low-latency
+    // mode (it hugs the edge and stalls on jitter); sit ~8s back with deep buffers,
+    // under the publisher's DVR window (HLS_WINDOW≈10 segs ≈ 20s).
+    const hls = new Hls({
+      enableWorker: true,
+      lowLatencyMode: false,
+      liveSyncDuration: 8,
+      liveMaxLatencyDuration: 18,
+      maxBufferLength: 20,
+      maxMaxBufferLength: 40,
+      backBufferLength: 20,
+      maxBufferHole: 0.5,
+      nudgeMaxRetry: 20,
+      fragLoadingMaxRetry: 8,
+      manifestLoadingMaxRetry: 6,
+      levelLoadingMaxRetry: 6,
+      startPosition: atTip ? 0 : -1,   // atTip → head of DVR (the tip); else live edge
+    });
+    hlsInst = hls;
+    hls.on(Hls.Events.MANIFEST_PARSED, () => { $('hls').textContent='playing'; $('hls').className='status ok'; video.play().catch(()=>{}); });
+    let mediaRecover = 0;
+    hls.on(Hls.Events.ERROR, (e, d) => {
+      if (!d.fatal || expired) return;   // stay quiet once the source has finished
+      $('hls').textContent = 'recovering… (' + d.details + ')'; $('hls').className = 'status warn';
+      if (d.type === Hls.ErrorTypes.NETWORK_ERROR) {
+        hls.startLoad();
+      } else if (d.type === Hls.ErrorTypes.MEDIA_ERROR) {
+        if (mediaRecover++ < 3) hls.recoverMediaError();
+        else { $('hls').textContent = 'error: ' + d.details; $('hls').className = 'status bad'; }
+      } else {
+        $('hls').textContent = 'error: ' + d.details; $('hls').className = 'status bad';
+      }
+    });
+    hls.on(Hls.Events.FRAG_PARSING_METADATA, (e, d) => onSamples(d.samples || []));
+    hls.loadSource(SRC);
+    hls.attachMedia(video);
+  } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+    // Safari: native HLS surfaces ID3 via a metadata text track.
+    video.src = SRC;
+    $('hls').textContent='playing (native)'; $('hls').className='status ok';
+    video.addEventListener('loadedmetadata', () => {
+      for (const tt of video.textTracks) if (tt.kind === 'metadata') {
+        tt.mode = 'hidden';
+        tt.addEventListener('cuechange', () => {
+          for (const c of tt.activeCues || []) {
+            const d = c.value && (c.value.data || c.value.info);
+            if (d) onSamples([{ pts: c.startTime, data: d instanceof Uint8Array ? d : new Uint8Array(d) }]);
+          }
+        });
+      }
+    });
+  }
 }
+
+// Boot: wait (standing by) for a playable playlist, then start — at the tip if the
+// stream is fresh (low media-sequence), else at the live edge.
+(async function boot() {
+  while (true) {
+    const info = await playlistInfo();
+    if (info.ok && info.segs >= 2) {
+      lastSig = info.seq + '/' + info.segs; lastGrow = Date.now();
+      startPlayback(info.seq <= 3);
+      return;
+    }
+    enterStandby('Waiting for the tip-off stream…');
+    await new Promise((r) => setTimeout(r, 800));
+  }
+})();
+
+// Expiry watchdog: the play-once source (~9 min) stops growing the playlist when it
+// ends (or it gets an ENDLIST). A reachable-but-frozen playlist ⇒ source finished →
+// "click Restart to replay". Gated on a SUCCESSFUL probe, so a client network drop
+// (probe fails) doesn't false-trigger — hls's own recovery handles that.
+const FREEZE_MS = 12000;
+function onExpired() {
+  if (expired) return;
+  expired = true;
+  try { hlsInst && hlsInst.stopLoad(); } catch (e) { /* ignore */ }
+  enterStandby('Source finished — click ↻ Restart @ tip-off (top-right) to replay.');
+  standbyEl.classList.add('ended');
+}
+setInterval(async () => {
+  if (expired) return;
+  const info = await playlistInfo();
+  if (!info.ok) return;
+  const sig = info.seq + '/' + info.segs;
+  if (sig !== lastSig) { lastSig = sig; lastGrow = Date.now(); }
+  if (info.endlist || Date.now() - lastGrow > FREEZE_MS) onExpired();
+}, 4000);
 
 // --- court rendering, synced to video.currentTime ---
 const cv = $('court'), ctx = cv.getContext('2d');
@@ -464,44 +514,21 @@ procBtn.addEventListener('click', async () => {
     setProc(s.processing);
   } catch (e) { refreshProc(); }
 });
-// Restart: re-align video + data to tip-off. The publisher relaunches, discards the
-// pre-tip lead-in (~11s), then rebuilds the playlist from segment 0. Show standby
-// meanwhile and poll the playlist; the instant a couple of fresh segments exist,
-// reload — with only ~2 segments live, hls.js starts at the head of the DVR, i.e.
-// right at the tip. The 'vpp-resuming' flag keeps standby up across that reload.
+// Restart: re-align video + data to tip-off. Show standby, kick the publisher, then
+// reload once the OLD playlist is gone / a FRESH one appears — after which boot()
+// stands by through the ~11s lead-in buffer and starts at the tip. Reloading (vs
+// rebuilding hls in place) reuses boot()'s readiness gate and clears stale state.
 restartBtn.addEventListener('click', async () => {
   restartBtn.disabled = true; procBtn.disabled = true;
-  restartBtn.textContent = '↻ Restart @ tip-off';
   enterStandby('Re-aligning video & data to tip-off — buffering the lead-in.');
   try { video.pause(); } catch (e) { /* ignore */ } // silence the old stream behind the panel
   try { await fetch('/api/restart', { method: 'POST' }); } catch (e) { /* ignore */ }
-
-  const startedAt = Date.now();
-  const READY_SEGS = 2;       // enough to start playback without an instant stall
-  const MAX_WAIT = 40000;     // failsafe: reload anyway if readiness never signals
-  async function poll() {
-    let ready = false;
-    try {
-      const r = await fetch(SRC + '?_=' + Date.now(), { cache: 'no-store' });
-      if (r.ok) {
-        const txt = await r.text();
-        const segs = txt.split('\n').filter((l) => l.trim() && !l.startsWith('#')).length;
-        const m = txt.match(/#EXT-X-MEDIA-SEQUENCE:(\d+)/);
-        const seq = m ? Number(m[1]) : 0;
-        // Fresh tip-off playlist = a couple segments AND still near sequence 0
-        // (guards against reloading into the OLD stream before it's torn down).
-        ready = segs >= READY_SEGS && seq <= 3;
-      }
-    } catch (e) { /* publisher not back up yet */ }
-    if (ready || Date.now() - startedAt > MAX_WAIT) {
-      standbySub.textContent = 'Tip-off ready — starting…';
-      sessionStorage.setItem('vpp-resuming', '1');
-      location.reload();
-      return;
-    }
-    setTimeout(poll, 700);
-  }
-  setTimeout(poll, 1500); // give the old playlist time to be torn down first
+  const t0 = Date.now();
+  (async function waitFresh() {
+    const info = await playlistInfo();
+    if (!info.ok || info.seq <= 3 || Date.now() - t0 > 8000) { location.reload(); return; }
+    setTimeout(waitFresh, 500);
+  })();
 });
 refreshProc();
 setInterval(refreshProc, 5000);

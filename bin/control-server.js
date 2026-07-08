@@ -31,7 +31,10 @@ const SRT_KILL = process.env.SRT_KILL ?? '20887';
 const RTMP_APP = 'live';
 const RTMP_NAME = 'hawkeye';
 
-const HLS_CMD = `cd ${REPO} && rm -f ${HLS_DIR}/* ; VIDEO=${VIDEO} exec node bin/hls-publish.js ${HLS_DIR} hawkeye`;
+// VIDEO_LOOP=0: play the ~9 min source once from tip-off, then let the publisher
+// exit — the player detects the finished stream and shows "click Restart to replay"
+// (also avoids the loop-drift that desyncs the pose feed on replay).
+const HLS_CMD = `cd ${REPO} && rm -f ${HLS_DIR}/* ; VIDEO=${VIDEO} VIDEO_LOOP=0 exec node bin/hls-publish.js ${HLS_DIR} hawkeye`;
 const SRT_CMD = `cd ${REPO} && VIDEO=${VIDEO} node bin/srt-publish.js 2>>/tmp/srt-push.log | srt-live-transmit -q file://con "${GW}"`;
 const RTMP_CMD = `cd ${REPO} && VIDEO=${VIDEO} exec node bin/rtmp-publish.js ${RTMP_APP} ${RTMP_NAME}`;
 

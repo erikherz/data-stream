@@ -11,7 +11,7 @@
   :root { --bg:#0b0f14; --panel:#121922; --line:#2a3645; --home:#4cc3ff; --away:#ff6b6b; --ball:#ff8c1a; }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:#e6edf3; font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace; }
-  header { padding:12px 16px; border-bottom:1px solid var(--line); }
+  header { padding:12px 16px; border-bottom:1px solid var(--line); position:relative; }
   header h1 { font-size:15px; margin:0 0 2px; font-weight:600; }
   header .note { color:#8b98a5; font-size:12px; }
   .badge { display:inline-block; margin-left:8px; padding:2px 8px; border-radius:10px; font-size:11px;
@@ -64,14 +64,35 @@
   table.roster tr.hasball td { background:rgba(255,140,26,.10); }
   td.bcell { color:var(--ball); text-align:center; }
   .mut { color:#8b98a5; }
+  #restart-btn { position:absolute; top:12px; right:16px; font:inherit; font-weight:600; padding:6px 12px;
+    border-radius:6px; cursor:pointer; border:1px solid var(--line); background:var(--panel); color:#e6edf3; }
+  #restart-btn:hover:not(:disabled) { border-color:var(--home); color:var(--home); }
+  #restart-btn:disabled { opacity:.5; cursor:default; }
+  #standby:not([hidden]) { display:flex; align-items:center; justify-content:center; min-height:60vh; }
+  #standby .sb-inner { text-align:center; color:#e6edf3; }
+  #standby .sb-spin { width:44px; height:44px; margin:0 auto 20px; border:4px solid var(--line);
+    border-top-color:var(--home); border-radius:50%; animation:sbspin .9s linear infinite; }
+  @keyframes sbspin { to { transform:rotate(360deg); } }
+  #standby .sb-title { font-size:22px; font-weight:700; letter-spacing:.5px; }
+  #standby .sb-sub { margin-top:8px; color:#8b98a5; font-size:13px; }
+  #standby.ended .sb-spin { display:none; }   /* source finished: not loading, awaiting Restart */
 </style>
 </head>
 <body>
 <header>
+  <button id="restart-btn" title="Restart the video + data from tip-off">↻ Restart @ tip-off</button>
   <h1>🏀 Hawkeye over HLS — lite <span class="badge">spatial data · as text</span></h1>
   <span class="note">In-band tracking (ID3→protobuf), gated to the video clock. Score + clock, per-player court position / speed / ball, and a text court plot — no canvas. Jersey numbers only (the feed carries no player names).</span>
 </header>
 
+<div id="standby" hidden>
+  <div class="sb-inner">
+    <div class="sb-spin"></div>
+    <div class="sb-title">Please stand by…</div>
+    <div class="sb-sub" id="standby-sub">Re-aligning video &amp; data to tip-off — buffering the lead-in.</div>
+  </div>
+</div>
+<div id="stage">
 <div id="scoreboard" class="scorebar">
   <div class="team home"><span class="tname">Home</span><span class="tscore" id="sb-home">0</span></div>
   <span class="sep">–</span>
@@ -105,6 +126,7 @@
   <table class="roster home" id="tbl-home"><caption>Home</caption></table>
   <table class="roster away" id="tbl-away"><caption>Away</caption></table>
 </section>
+</div>
 
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
 <script src="https://cdn.jsdelivr.net/npm/protobufjs@7.4.0/dist/protobuf.min.js"></script>
@@ -185,44 +207,116 @@ function onSamples(samples) {
   $('cues').textContent = cueCount;
 }
 
-// --- player: reliability over latency (same tuning as the full player) ---
+// --- player: reliability over latency; standby state machine (shared with full) ---
+// Standby is driven off the SHARED playlist state, so loading/reloading /lite or the
+// full player after a restart from either behaves correctly (buffering lead-in →
+// stand by then start at tip; play-once source finished → "click Restart to replay").
 const video = $('video');
 const SRC = '/hls/hawkeye.m3u8';
-if (Hls.isSupported()) {
-  const hls = new Hls({
-    enableWorker: true, lowLatencyMode: false,
-    liveSyncDuration: 8, liveMaxLatencyDuration: 18,
-    maxBufferLength: 20, maxMaxBufferLength: 40, backBufferLength: 20,
-    maxBufferHole: 0.5, nudgeMaxRetry: 20,
-    fragLoadingMaxRetry: 8, manifestLoadingMaxRetry: 6, levelLoadingMaxRetry: 6,
-  });
-  hls.on(Hls.Events.MANIFEST_PARSED, () => { $('hls').textContent='playing'; $('hls').className='status ok'; video.play().catch(()=>{}); });
-  let mediaRecover = 0;
-  hls.on(Hls.Events.ERROR, (e, d) => {
-    if (!d.fatal) return;
-    $('hls').textContent = 'recovering… (' + d.details + ')'; $('hls').className = 'status warn';
-    if (d.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad();
-    else if (d.type === Hls.ErrorTypes.MEDIA_ERROR) { if (mediaRecover++ < 3) hls.recoverMediaError(); else { $('hls').textContent='error: '+d.details; $('hls').className='status bad'; } }
-    else { $('hls').textContent = 'error: ' + d.details; $('hls').className = 'status bad'; }
-  });
-  hls.on(Hls.Events.FRAG_PARSING_METADATA, (e, d) => onSamples(d.samples || []));
-  hls.loadSource(SRC);
-  hls.attachMedia(video);
-} else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-  video.src = SRC;
-  $('hls').textContent='playing (native)'; $('hls').className='status ok';
-  video.addEventListener('loadedmetadata', () => {
-    for (const tt of video.textTracks) if (tt.kind === 'metadata') {
-      tt.mode = 'hidden';
-      tt.addEventListener('cuechange', () => {
-        for (const c of tt.activeCues || []) {
-          const d = c.value && (c.value.data || c.value.info);
-          if (d) onSamples([{ pts: c.startTime, data: d instanceof Uint8Array ? d : new Uint8Array(d) }]);
-        }
-      });
-    }
-  });
+const stageEl = $('stage'), standbyEl = $('standby'), standbySub = $('standby-sub'), restartBtn = $('restart-btn');
+function revealStage() { standbyEl.hidden = true; stageEl.hidden = false; }
+function enterStandby(sub) { if (sub) standbySub.textContent = sub; stageEl.hidden = true; standbyEl.hidden = false; }
+
+let hlsInst = null, expired = false, lastSig = '', lastGrow = Date.now();
+video.addEventListener('playing', () => { if (!expired) revealStage(); });
+
+async function playlistInfo() {
+  try {
+    const r = await fetch(SRC + '?_=' + Date.now(), { cache: 'no-store' });
+    if (!r.ok) return { ok: false };
+    const txt = await r.text();
+    const segs = txt.split('\n').filter((l) => l.trim() && !l.startsWith('#')).length;
+    const m = txt.match(/#EXT-X-MEDIA-SEQUENCE:(\d+)/);
+    return { ok: true, segs, seq: m ? Number(m[1]) : 0, endlist: txt.includes('#EXT-X-ENDLIST') };
+  } catch (e) { return { ok: false }; }
 }
+
+function startPlayback(atTip) {
+  if (Hls.isSupported()) {
+    const hls = new Hls({
+      enableWorker: true, lowLatencyMode: false,
+      liveSyncDuration: 8, liveMaxLatencyDuration: 18,
+      maxBufferLength: 20, maxMaxBufferLength: 40, backBufferLength: 20,
+      maxBufferHole: 0.5, nudgeMaxRetry: 20,
+      fragLoadingMaxRetry: 8, manifestLoadingMaxRetry: 6, levelLoadingMaxRetry: 6,
+      startPosition: atTip ? 0 : -1,
+    });
+    hlsInst = hls;
+    hls.on(Hls.Events.MANIFEST_PARSED, () => { $('hls').textContent='playing'; $('hls').className='status ok'; video.play().catch(()=>{}); });
+    let mediaRecover = 0;
+    hls.on(Hls.Events.ERROR, (e, d) => {
+      if (!d.fatal || expired) return;
+      $('hls').textContent = 'recovering… (' + d.details + ')'; $('hls').className = 'status warn';
+      if (d.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad();
+      else if (d.type === Hls.ErrorTypes.MEDIA_ERROR) { if (mediaRecover++ < 3) hls.recoverMediaError(); else { $('hls').textContent='error: '+d.details; $('hls').className='status bad'; } }
+      else { $('hls').textContent = 'error: ' + d.details; $('hls').className = 'status bad'; }
+    });
+    hls.on(Hls.Events.FRAG_PARSING_METADATA, (e, d) => onSamples(d.samples || []));
+    hls.loadSource(SRC);
+    hls.attachMedia(video);
+  } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+    video.src = SRC;
+    $('hls').textContent='playing (native)'; $('hls').className='status ok';
+    video.addEventListener('loadedmetadata', () => {
+      for (const tt of video.textTracks) if (tt.kind === 'metadata') {
+        tt.mode = 'hidden';
+        tt.addEventListener('cuechange', () => {
+          for (const c of tt.activeCues || []) {
+            const d = c.value && (c.value.data || c.value.info);
+            if (d) onSamples([{ pts: c.startTime, data: d instanceof Uint8Array ? d : new Uint8Array(d) }]);
+          }
+        });
+      }
+    });
+  }
+}
+
+// Boot: stand by until a playable playlist exists, then start — at the tip if fresh.
+(async function boot() {
+  while (true) {
+    const info = await playlistInfo();
+    if (info.ok && info.segs >= 2) {
+      lastSig = info.seq + '/' + info.segs; lastGrow = Date.now();
+      startPlayback(info.seq <= 3);
+      return;
+    }
+    enterStandby('Waiting for the tip-off stream…');
+    await new Promise((r) => setTimeout(r, 800));
+  }
+})();
+
+// Expiry watchdog: reachable-but-frozen playlist ⇒ play-once source finished.
+const FREEZE_MS = 12000;
+function onExpired() {
+  if (expired) return;
+  expired = true;
+  try { hlsInst && hlsInst.stopLoad(); } catch (e) { /* ignore */ }
+  enterStandby('Source finished — click ↻ Restart @ tip-off (top-right) to replay.');
+  standbyEl.classList.add('ended');
+}
+setInterval(async () => {
+  if (expired) return;
+  const info = await playlistInfo();
+  if (!info.ok) return;
+  const sig = info.seq + '/' + info.segs;
+  if (sig !== lastSig) { lastSig = sig; lastGrow = Date.now(); }
+  if (info.endlist || Date.now() - lastGrow > FREEZE_MS) onExpired();
+}, 4000);
+
+// Restart: kick the publisher, stand by, reload once the OLD playlist is gone / a
+// FRESH one appears — then boot() rides the ~11s lead-in and starts at the tip.
+restartBtn.addEventListener('click', async () => {
+  restartBtn.disabled = true;
+  enterStandby('Re-aligning video & data to tip-off — buffering the lead-in.');
+  try { video.pause(); } catch (e) { /* ignore */ }
+  try { await fetch('/api/restart', { method: 'POST' }); } catch (e) { /* ignore */ }
+  const t0 = Date.now();
+  (async function waitFresh() {
+    const info = await playlistInfo();
+    if (!info.ok || info.seq <= 3 || Date.now() - t0 > 8000) { location.reload(); return; }
+    setTimeout(waitFresh, 500);
+  })();
+});
 
 function pickFrame(t) {
   let lo = 0, hi = frames.length - 1, best = null;
