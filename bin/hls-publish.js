@@ -41,26 +41,52 @@ injector.on('data', (d) => segmenter.feed(d));
 // PTS (file position) and the pose capture wall-clock — and publish the delta so
 // the player can show it (and later apply it as a render offset). Anchored to the
 // first sample of each, captured at process start = this tip-off.
-let tipVideoPts = null;   // first video PTS seen (≈ tip)
 let tipCaptureTs = null;  // first pose capture ts seen (≈ tip)
 let lastCaptureTs = null;
 
 const tap = createFrameSource();
 tap.on('open', () => log(`feed connected: ${tap.url}`));
 tap.on('error', (err) => log(`feed error: ${err.message}`));
+
+// Start the video encoder ONLY once the first pose frame is in hand, so video
+// content-0 (tip-off) welds to data content-0 (tip-off). The injector welds each
+// pose to the CURRENT video PTS as it drains; if ffmpeg ran ahead during the
+// feed's connect+roster+first-frame latency, that first pose would weld to an
+// already-advanced PTS and the data would trail the video by that gap (the ~11s
+// startup skew). Gating the encoder on the first frame makes both begin together.
+let ffmpeg = null;
+function startFfmpeg() {
+  // VIDEO_LOOP=0 plays the source once (from tip-off) and stops; the default loops.
+  // Looping re-runs the ~9 min clip and drifts out of sync with the continuous pose feed.
+  const LOOP = (process.env.VIDEO_LOOP ?? '1') !== '0' ? ['-stream_loop', '-1'] : [];
+  ffmpeg = spawn('ffmpeg', [
+    '-hide_banner', '-loglevel', 'error',
+    '-re', ...LOOP, '-i', VIDEO,
+    '-c:a', 'aac', '-ac', '2', '-b:a', '128k',
+    '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency', '-crf', '23',
+    '-g', '60', '-keyint_min', '60', '-sc_threshold', '0',
+    '-force_key_frames', 'expr:gte(t,n_forced*2)',
+    '-f', 'mpegts', '-mpegts_flags', '+resend_headers', '-pat_period', '0.2', 'pipe:1',
+  ], { stdio: ['ignore', 'pipe', 'inherit'] });
+  ffmpeg.stdout.pipe(injector);
+  ffmpeg.on('exit', (code) => { log(`ffmpeg exited (${code})`); shutdown(); });
+  log(`writing HLS to ${outDir}/${name}.m3u8 (metadata PID 0x${META_PID.toString(16)})`);
+}
+
 tap.on('frame', (f) => {
   injector.pushFrame(f.raw);
   if (f.captureTs) {
     if (tipCaptureTs == null) tipCaptureTs = f.captureTs;
     lastCaptureTs = f.captureTs;
   }
+  if (!ffmpeg) { log('first pose frame in hand — starting tip-aligned video'); startFfmpeg(); }
 });
 await tap.start();
 
 const SYNC_PATH = path.join(outDir, 'sync.json');
 function writeSync() {
   const vpts = injector.lastVideoPts;
-  if (tipVideoPts == null && vpts > 0) tipVideoPts = vpts;
+  const tipVideoPts = injector.firstVideoPts; // exact tip anchor (ffmpeg's first PTS)
   const videoFromTip = tipVideoPts != null ? (vpts - tipVideoPts) / 90000 : null;
   const dataFromTip = (tipCaptureTs != null && lastCaptureTs != null)
     ? (lastCaptureTs - tipCaptureTs) / 1000 : null;
@@ -76,22 +102,6 @@ function writeSync() {
 }
 const syncTimer = setInterval(writeSync, 1000);
 
-// VIDEO_LOOP=0 plays the source once (from tip-off) and stops; the default loops.
-// Looping re-runs the ~9 min clip and drifts out of sync with the continuous pose feed.
-const LOOP = (process.env.VIDEO_LOOP ?? '1') !== '0' ? ['-stream_loop', '-1'] : [];
-const ffmpeg = spawn('ffmpeg', [
-  '-hide_banner', '-loglevel', 'error',
-  '-re', ...LOOP, '-i', VIDEO,
-  '-c:a', 'aac', '-ac', '2', '-b:a', '128k',
-  '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency', '-crf', '23',
-  '-g', '60', '-keyint_min', '60', '-sc_threshold', '0',
-  '-force_key_frames', 'expr:gte(t,n_forced*2)',
-  '-f', 'mpegts', '-mpegts_flags', '+resend_headers', '-pat_period', '0.2', 'pipe:1',
-], { stdio: ['ignore', 'pipe', 'inherit'] });
-
-ffmpeg.stdout.pipe(injector);
-log(`writing HLS to ${outDir}/${name}.m3u8 (metadata PID 0x${META_PID.toString(16)})`);
-
 const statsTimer = setInterval(() => {
   log(`segments=${segmenter.seq} window=${segmenter.window.length} injected=${injector.injected} queue=${injector.pending.length}`);
 }, 2000);
@@ -100,9 +110,8 @@ function shutdown() {
   clearInterval(statsTimer);
   clearInterval(syncTimer);
   tap.stop();
-  try { ffmpeg.kill('SIGTERM'); } catch { /* ignore */ }
+  try { ffmpeg?.kill('SIGTERM'); } catch { /* ignore */ }
   process.exit(0);
 }
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
-ffmpeg.on('exit', (code) => { log(`ffmpeg exited (${code})`); shutdown(); });
