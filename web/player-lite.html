@@ -93,6 +93,9 @@
     <div><span class="k">frame id</span><span id="fid">—</span></div>
     <div><span class="k">on court</span><span id="people">—</span></div>
     <div><span class="k">data↔video</span><span id="skew">—</span></div>
+    <div style="border-top:1px solid var(--line);margin-top:4px;padding-top:6px"><span class="k">from tip · video</span><span id="vtip">—</span></div>
+    <div><span class="k">from tip · data</span><span id="dtip">—</span></div>
+    <div><span class="k">sync Δ (v−d)</span><span id="syncdelta" class="status">—</span></div>
   </div>
 </div>
 
@@ -347,6 +350,27 @@ setInterval(() => {
   $('tbl-home').innerHTML = '<caption>Home</caption>' + COLG + HEAD + teamRows(home, ball, carrierId);
   $('tbl-away').innerHTML = '<caption>Away</caption>' + COLG + HEAD + teamRows(away, ball, carrierId);
 }, 200);
+
+// --- from-tip sync: server publishes video/data elapsed-from-tipoff (monotonic,
+// doesn't stop for dead balls) + their delta. Show it live. ---
+function fmtTip(s) {
+  if (s == null) return '—';
+  const neg = s < 0; s = Math.abs(s);
+  return (neg ? '-' : '') + Math.floor(s/60) + ':' + String(Math.floor(s%60)).padStart(2,'0');
+}
+async function refreshTipSync() {
+  try {
+    const s = await (await fetch('/hls/sync.json?_=' + Date.now(), { cache:'no-store' })).json();
+    $('vtip').textContent = fmtTip(s.videoFromTip);
+    $('dtip').textContent = fmtTip(s.dataFromTip);
+    const d = s.delta, el = $('syncdelta');
+    if (d == null) { el.textContent = '—'; el.className = 'status'; return; }
+    el.textContent = `${d >= 0 ? '+' : ''}${d.toFixed(1)}s ${d >= 0 ? '(video ahead)' : '(data ahead)'}`;
+    el.className = 'status ' + (Math.abs(d) < 1 ? 'ok' : 'warn');
+  } catch (e) { $('syncdelta').textContent = '—'; }
+}
+refreshTipSync();
+setInterval(refreshTipSync, 1000);
 </script>
 </body>
 </html>

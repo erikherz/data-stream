@@ -9,6 +9,8 @@
 // Usage: node bin/hls-publish.js [outDir=/tmp/hls] [name=hawkeye]
 
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
 import { createFrameSource } from '../lib/frame-source.js';
 import { TsInjector } from '../lib/ts-inject.js';
 import { HlsSegmenter } from '../lib/hls-segmenter.js';
@@ -33,11 +35,46 @@ const injector = new TsInjector({
 const segmenter = new HlsSegmenter({ dir: outDir, name, windowSize: HLS_WINDOW });
 injector.on('data', (d) => segmenter.feed(d));
 
+// Sync-from-tipoff: the video file is trimmed to start at tip-off and the pose
+// feed connects from=tipoff, so both begin at tip. Track each stream's elapsed-
+// from-tip from a MONOTONIC signal that doesn't stop for dead balls — the video
+// PTS (file position) and the pose capture wall-clock — and publish the delta so
+// the player can show it (and later apply it as a render offset). Anchored to the
+// first sample of each, captured at process start = this tip-off.
+let tipVideoPts = null;   // first video PTS seen (≈ tip)
+let tipCaptureTs = null;  // first pose capture ts seen (≈ tip)
+let lastCaptureTs = null;
+
 const tap = createFrameSource();
 tap.on('open', () => log(`feed connected: ${tap.url}`));
 tap.on('error', (err) => log(`feed error: ${err.message}`));
-tap.on('frame', (f) => injector.pushFrame(f.raw));
+tap.on('frame', (f) => {
+  injector.pushFrame(f.raw);
+  if (f.captureTs) {
+    if (tipCaptureTs == null) tipCaptureTs = f.captureTs;
+    lastCaptureTs = f.captureTs;
+  }
+});
 await tap.start();
+
+const SYNC_PATH = path.join(outDir, 'sync.json');
+function writeSync() {
+  const vpts = injector.lastVideoPts;
+  if (tipVideoPts == null && vpts > 0) tipVideoPts = vpts;
+  const videoFromTip = tipVideoPts != null ? (vpts - tipVideoPts) / 90000 : null;
+  const dataFromTip = (tipCaptureTs != null && lastCaptureTs != null)
+    ? (lastCaptureTs - tipCaptureTs) / 1000 : null;
+  const delta = (videoFromTip != null && dataFromTip != null)
+    ? Number((videoFromTip - dataFromTip).toFixed(2)) : null;   // + = video ahead
+  const snap = {
+    updatedAt: Date.now(),
+    videoFromTip: videoFromTip != null ? Number(videoFromTip.toFixed(2)) : null,
+    dataFromTip: dataFromTip != null ? Number(dataFromTip.toFixed(2)) : null,
+    delta,
+  };
+  try { fs.writeFileSync(SYNC_PATH, JSON.stringify(snap)); } catch (e) { log(`sync: ${e.message}`); }
+}
+const syncTimer = setInterval(writeSync, 1000);
 
 // VIDEO_LOOP=0 plays the source once (from tip-off) and stops; the default loops.
 // Looping re-runs the ~9 min clip and drifts out of sync with the continuous pose feed.
@@ -61,6 +98,7 @@ const statsTimer = setInterval(() => {
 
 function shutdown() {
   clearInterval(statsTimer);
+  clearInterval(syncTimer);
   tap.stop();
   try { ffmpeg.kill('SIGTERM'); } catch { /* ignore */ }
   process.exit(0);
