@@ -84,6 +84,23 @@
   <h1>🏀 Hawkeye over HLS — <span style="color:var(--home)">video, audio</span> + in-band tracking data</h1>
   <span class="note">The skeletons are decoded live from ID3 timed-metadata (PRIV→protobuf) carried inside the HLS segments, synced to the video clock.</span>
 </header>
+<style>
+  #standby:not([hidden]) { display:flex; align-items:center; justify-content:center; min-height:60vh; }
+  #standby .sb-inner { text-align:center; color:#e6edf3; }
+  #standby .sb-spin { width:44px; height:44px; margin:0 auto 20px; border:4px solid var(--line);
+    border-top-color:var(--home); border-radius:50%; animation:sbspin 0.9s linear infinite; }
+  @keyframes sbspin { to { transform:rotate(360deg); } }
+  #standby .sb-title { font-size:22px; font-weight:700; letter-spacing:0.5px; }
+  #standby .sb-sub { margin-top:8px; color:#8b98a5; font-size:13px; }
+</style>
+<div id="standby" hidden>
+  <div class="sb-inner">
+    <div class="sb-spin"></div>
+    <div class="sb-title">Please stand by…</div>
+    <div class="sb-sub" id="standby-sub">Re-aligning video &amp; data to tip-off — buffering the lead-in.</div>
+  </div>
+</div>
+<div id="stage">
 <div id="scoreboard" class="scorebar">
   <div class="team home"><span class="tname">Home</span><span class="tscore" id="sb-home">0</span></div>
   <span class="sep">–</span>
@@ -149,6 +166,7 @@
     </div>
   </div>
 </section>
+</div>
 
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
 <script src="https://cdn.jsdelivr.net/npm/protobufjs@7.4.0/dist/protobuf.min.js"></script>
@@ -228,6 +246,21 @@ function onSamples(samples) {
 // --- player ---
 const video = $('video');
 const SRC = '/hls/hawkeye.m3u8';
+
+// Standby overlay: on a tip-off restart the publisher discards the pre-tip lead-in
+// (~11s) before any video exists, so instead of a dead spinner we hide the stage
+// and show "Please stand by…". We reload once the fresh playlist is up, then hold
+// standby across the reload until the video actually starts playing — so it snaps
+// in right at the tip rather than flashing a black player.
+const stageEl = $('stage'), standbyEl = $('standby'), standbySub = $('standby-sub');
+function revealStage() { standbyEl.hidden = true; stageEl.hidden = false; }
+function enterStandby(sub) { if (sub) standbySub.textContent = sub; stageEl.hidden = true; standbyEl.hidden = false; }
+if (sessionStorage.getItem('vpp-resuming')) {
+  sessionStorage.removeItem('vpp-resuming');
+  enterStandby('Tip-off ready — starting…');
+  setTimeout(revealStage, 20000); // failsafe so a bad load can't hide the stage forever
+}
+video.addEventListener('playing', revealStage, { once: true });
 if (Hls.isSupported()) {
   // This is a file-based demo — latency doesn't matter, reliability does. So no
   // low-latency mode (it hugs the live edge and stalls/seeks on any jitter);
@@ -431,14 +464,44 @@ procBtn.addEventListener('click', async () => {
     setProc(s.processing);
   } catch (e) { refreshProc(); }
 });
-// Restart: re-align video + data to tip-off. The publishers relaunch and the HLS
-// stream resets to segment 0, so we reload once the fresh stream is up.
+// Restart: re-align video + data to tip-off. The publisher relaunches, discards the
+// pre-tip lead-in (~11s), then rebuilds the playlist from segment 0. Show standby
+// meanwhile and poll the playlist; the instant a couple of fresh segments exist,
+// reload — with only ~2 segments live, hls.js starts at the head of the DVR, i.e.
+// right at the tip. The 'vpp-resuming' flag keeps standby up across that reload.
 restartBtn.addEventListener('click', async () => {
   restartBtn.disabled = true; procBtn.disabled = true;
-  restartBtn.textContent = 'Restarting…';
+  restartBtn.textContent = '↻ Restart @ tip-off';
+  enterStandby('Re-aligning video & data to tip-off — buffering the lead-in.');
+  try { video.pause(); } catch (e) { /* ignore */ } // silence the old stream behind the panel
   try { await fetch('/api/restart', { method: 'POST' }); } catch (e) { /* ignore */ }
-  restartBtn.textContent = 'Reloading…';
-  setTimeout(() => location.reload(), 4000); // let the fresh tip-off segments build
+
+  const startedAt = Date.now();
+  const READY_SEGS = 2;       // enough to start playback without an instant stall
+  const MAX_WAIT = 40000;     // failsafe: reload anyway if readiness never signals
+  async function poll() {
+    let ready = false;
+    try {
+      const r = await fetch(SRC + '?_=' + Date.now(), { cache: 'no-store' });
+      if (r.ok) {
+        const txt = await r.text();
+        const segs = txt.split('\n').filter((l) => l.trim() && !l.startsWith('#')).length;
+        const m = txt.match(/#EXT-X-MEDIA-SEQUENCE:(\d+)/);
+        const seq = m ? Number(m[1]) : 0;
+        // Fresh tip-off playlist = a couple segments AND still near sequence 0
+        // (guards against reloading into the OLD stream before it's torn down).
+        ready = segs >= READY_SEGS && seq <= 3;
+      }
+    } catch (e) { /* publisher not back up yet */ }
+    if (ready || Date.now() - startedAt > MAX_WAIT) {
+      standbySub.textContent = 'Tip-off ready — starting…';
+      sessionStorage.setItem('vpp-resuming', '1');
+      location.reload();
+      return;
+    }
+    setTimeout(poll, 700);
+  }
+  setTimeout(poll, 1500); // give the old playlist time to be torn down first
 });
 refreshProc();
 setInterval(refreshProc, 5000);
