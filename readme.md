@@ -303,12 +303,23 @@ hls.js is tuned for **reliability over latency** (this is a file-based demo):
 forward/back buffer and tolerates small gaps rather than stalling and seeking;
 fatal network/media errors auto-recover instead of ending playback. The client
 keeps ~66s of decoded frames so the overlay always spans the played position.
-Note this locks the overlay to the *video clock*, not to real game time — if the
-source video and the data feed are independent renditions, their game-clocks can
-still differ (content drift); that is not a transport/sync problem.
+
+**Tip-off alignment.** The overlay is locked to the *video clock*, so what makes
+the skeletons match the picture is that the video file and the data feed start at
+the same game moment. The feed's `from=tipoff` marker begins a fixed lead-in
+*before* the video's visual tip-off, so `bin/hls-publish.js` buffers the feed and
+discards that lead-in — it starts ffmpeg only once the data has advanced past
+`DATA_OFFSET_S` (default 11s), welding the video's first frame to the data's tip.
+The publisher writes a `sync.json` (and the player shows a *from tip · video /
+data / Δ* readout) so each stream's elapsed-from-tip is visible; verify alignment
+with the fast-moving **shot clock** (burned-in vs data), not the game clock, which
+freezes on dead balls. Any residual game-clock difference is content drift between
+two independent renditions, not a transport problem.
 
 ```sh
-node bin/hls-publish.js /tmp/hls hawkeye   # live HLS with the ID3 metadata PID
+# DATA_OFFSET_S: seconds of the feed's pre-tip lead-in to discard (align to the tip)
+# VIDEO_LOOP=0:  play the source once from tip-off then exit (default loops forever)
+DATA_OFFSET_S=11 VIDEO_LOOP=0 node bin/hls-publish.js /tmp/hls hawkeye
 bash scripts/hls-loopback-test.sh          # publish + verify ID3 round-trip
 ```
 
@@ -324,8 +335,14 @@ live `.ts` in-browser) and side-by-side "Live SRT pull" / "Live RTMP" cards
 showing the parallel SRT/KLV and RTMP/AMF0 tracks (each polled from a server-side
 snapshot every ~5 s). A small control-server (`bin/control-server.js`) backs the
 Start/Stop button, which starts/stops all three transports (HLS + SRT + RTMP) at
-once. `scripts/serve-player.sh` drops the page at the nginx webroot and points the
-publisher at `/var/www/html/hls`:
+once, and a **↻ Restart @ tip-off** button that re-aligns video + data. When the
+play-once source finishes, or during a restart's tip-off buffering, the page shows
+a **"Please stand by…"** panel driven by the *shared* playlist state (so loading
+or reloading resumes at the tip), then snaps in. A lite variant
+(`web/player-lite.html`) renders the same in-band data as text — score, per-player
+court position / speed / ball, and a monospace court plot — with the same standby
+behavior. `scripts/serve-player.sh` drops the page at the nginx webroot and points
+the publisher at `/var/www/html/hls`:
 
 ```sh
 bash scripts/serve-player.sh   # then open http://<server-ip>/
