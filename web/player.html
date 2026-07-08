@@ -132,14 +132,14 @@
   <div id="cards" class="cards" hidden></div>
 </section>
 
-<section class="analyze">
+<section class="analyze" id="snap-section" hidden>
   <div class="snaprow">
-    <div class="snapcol">
+    <div class="snapcol" id="srt-col" hidden>
       <strong>Live SRT MPEG-TS — pulled from the gateway every ~5s</strong>
       <span class="note" id="srt-meta"></span>
       <div id="srt-card" class="cards"></div>
     </div>
-    <div class="snapcol">
+    <div class="snapcol" id="rtmp-col" hidden>
       <strong>Live RTMP — pulled from Node-Media-Server every ~5s</strong>
       <span class="note" id="rtmp-meta"></span>
       <div id="rtmp-card" class="cards"></div>
@@ -540,14 +540,33 @@ function renderSrt(s) {
   }
   srtCard.innerHTML = `<div class="card" style="min-width:360px">${rows}${klvHtml}</div>`;
 }
+// Auto-hide an output's whole card when its feed is off. Signal: the snapshot's
+// `time` stops advancing (the SRT/RTMP output — or its snapshot loop — isn't
+// running). Uses change-detection, not absolute age, so it's immune to any
+// client/server clock skew. Keeps polling, so the card reappears on its own when
+// the output is turned back on.
+const SNAP_STALE_MS = 15000;
+const snapSeen = { srt: { t: 0, at: 0 }, rtmp: { t: 0, at: 0 } };
+function snapLive(key, time, now) {
+  const s = snapSeen[key];
+  if (time && time !== s.t) { s.t = time; s.at = now; }
+  return s.at !== 0 && (now - s.at) < SNAP_STALE_MS;
+}
+// Collapse the whole section when neither output is live.
+function syncSnapSection() {
+  $('snap-section').hidden = $('srt-col').hidden && $('rtmp-col').hidden;
+}
+
 async function refreshSrt() {
   try {
     const s = await (await fetch('/srt/snapshot.json?_=' + Date.now(), { cache:'no-store' })).json();
-    srtMeta.textContent = s.time
-      ? `${(s.bytes/1024|0).toLocaleString()} KB pulled · updated ${new Date(s.time).toLocaleTimeString()}`
-      : '';
+    const live = snapLive('srt', s.time, Date.now());
+    $('srt-col').hidden = !live;
+    syncSnapSection();
+    if (!live) return;
+    srtMeta.textContent = `${(s.bytes/1024|0).toLocaleString()} KB pulled · updated ${new Date(s.time).toLocaleTimeString()}`;
     renderSrt(s);
-  } catch (e) { srtMeta.textContent = 'snapshot unavailable'; srtCard.innerHTML = ''; }
+  } catch (e) { $('srt-col').hidden = true; syncSnapSection(); }
 }
 refreshSrt();
 setInterval(refreshSrt, 5000);
@@ -584,9 +603,13 @@ function renderRtmp(s) {
 async function refreshRtmp() {
   try {
     const s = await (await fetch('/rtmp/snapshot.json?_=' + Date.now(), { cache:'no-store' })).json();
-    rtmpMeta.textContent = s.time ? `updated ${new Date(s.time).toLocaleTimeString()}` : '';
+    const live = snapLive('rtmp', s.time, Date.now());
+    $('rtmp-col').hidden = !live;
+    syncSnapSection();
+    if (!live) return;
+    rtmpMeta.textContent = `updated ${new Date(s.time).toLocaleTimeString()}`;
     renderRtmp(s);
-  } catch (e) { rtmpMeta.textContent = 'snapshot unavailable'; rtmpCard.innerHTML = ''; }
+  } catch (e) { $('rtmp-col').hidden = true; syncSnapSection(); }
 }
 refreshRtmp();
 setInterval(refreshRtmp, 5000);
