@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Hawkeye HLS — video, audio + in-band tracking data</title>
+<title>Streaming Live Human Motion Over HLS: Synchronized Video, Audio, Timecode, and Skeletal Tracking Data</title>
 <!-- Typography borrowed from the experiencematters.cloud/spatial-feed visualization:
      Big Shoulders (display), Jersey 15 (jersey numbers), Victor Mono (readouts). -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -26,7 +26,7 @@
   .proc-btn.on  { background:#3a1620; color:#ff6b6b; border-color:#7a2c38; }
   .proc-btn:disabled { opacity:.55; cursor:default; }
   header h1 { font-family:'Big Shoulders','Arial Narrow',sans-serif; font-size:24px; letter-spacing:.3px;
-    margin:0 0 2px; font-weight:800; text-transform:uppercase; }
+    margin:0 0 2px; font-weight:800; text-transform:uppercase; padding-right:360px; }
   header .note { color:#8b98a5; font-size:12px; }
   .wrap { display:flex; gap:16px; padding:16px; flex-wrap:wrap; align-items:flex-start; }
   video { width:520px; max-width:100%; background:#000; border:1px solid var(--line); border-radius:8px; }
@@ -81,7 +81,7 @@
     <button id="restart-btn" class="proc-btn" title="Restart the video + data from tip-off">↻ Restart @ tip-off</button>
     <button id="proc-toggle" class="proc-btn" disabled>…</button>
   </div>
-  <h1>🏀 Hawkeye over HLS — <span style="color:var(--home)">video, audio</span> + in-band tracking data</h1>
+  <h1>🏀 Streaming Live <span style="color:var(--home)">Human Motion</span> Over HLS: Synchronized Video, Audio, Timecode, and Skeletal Tracking Data</h1>
   <span class="note">The skeletons are decoded live from ID3 timed-metadata (PRIV→protobuf) carried inside the HLS segments, synced to the video clock.</span>
 </header>
 <style>
