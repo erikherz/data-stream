@@ -345,7 +345,9 @@ function buildCourt(players, ball, carrierId) {
   const grid = Array.from({length: ROWS}, () => Array(COLS).fill(null));
   const place = (x, y, txt, cls) => {
     const c = Math.max(0, Math.min(COLS-1, Math.round(x / COURT.x * (COLS-1))));
-    const r = Math.max(0, Math.min(ROWS-1, Math.round(y / COURT.y * (ROWS-1))));
+    // Flip the width (near/far) axis to match the video — same fix as the full
+    // player's mapY (row 0 is the top, so invert to put small-y at the bottom).
+    const r = Math.max(0, Math.min(ROWS-1, (ROWS-1) - Math.round(y / COURT.y * (ROWS-1))));
     grid[r][c] = { txt, cls };
   };
   for (const p of players) {

@@ -370,7 +370,10 @@ setInterval(async () => {
 // --- court rendering, synced to video.currentTime ---
 const cv = $('court'), ctx = cv.getContext('2d');
 const mapX = (mx) => 16 + (mx / COURT.x) * (cv.width - 32);
-const mapY = (my) => 12 + (my / COURT.y) * (cv.height - 24);
+// Flip the width (near/far) axis: screen-Y grows downward and the feed's width
+// axis isn't otherwise compensated, so without this the two sidelines are swapped
+// (the "view from below the court" mirror). Basket-to-basket (X) is already correct.
+const mapY = (my) => 12 + (1 - my / COURT.y) * (cv.height - 24);
 
 function pickFrame(t) {
   let lo = 0, hi = frames.length - 1, best = null;
